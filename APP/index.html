@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>C.A.D.I - Drone Control</title>
+    <link rel="stylesheet" href="style.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      href="https://fonts.googleapis.com/icon?family=Material+Icons"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <header>
+      <div class="top-bar">
+        <div class="status-left">
+          <!-- Removed Control Status -->
+        </div>
+        <div class="title-section">
+          <h1>C.A.D.I</h1>
+          <p>"The skies are ours to protect"</p>
+        </div>
+        <div class="status-right">
+          <div class="status-item">
+            <span class="icon">settings_remote</span> Drone Connected
+          </div>
+          <div class="status-item">
+            <span class="icon">battery_std</span> 100%
+          </div>
+          <div class="alert-badge">! <span>1</span></div>
+        </div>
+      </div>
+      <nav class="tabs">
+        <button class="tab-btn active">Telemetry</button>
+        <button class="tab-btn">Commands</button>
+        <div class="spacer"></div>
+        <div class="device-selectors">
+          <button id="refresh-ports" class="icon-btn" title="Refresh Ports">
+            <span class="icon">refresh</span>
+          </button>
+          <select id="telemetry-port-select" class="device-select">
+            <option value="">Select Telemetry Port</option>
+          </select>
+        </div>
+        <div class="drone-status">Drone State</div>
+      </nav>
+    </header>
+
+    <main class="dashboard">
+      <section class="telemetry-grid">
+        <div class="card metric-card" id="altitude">
+          <div class="card-header">
+            <span class="icon">arrow_upward</span> Altitude
+          </div>
+          <div class="metric-value">0 <span class="unit">m</span></div>
+        </div>
+        <div class="card metric-card" id="speed">
+          <div class="card-header"><span class="icon">speed</span> Speed</div>
+          <div class="metric-value">0 <span class="unit">Km/h</span></div>
+        </div>
+        <div class="card metric-card" id="wind">
+          <div class="card-header"><span class="icon">air</span> Wind</div>
+          <div class="metric-value">
+            0 <span class="unit">Km/h</span> <span class="sub-value">0°</span>
+          </div>
+        </div>
+        <div class="card metric-card" id="temperature">
+          <div class="card-header">
+            <span class="icon">thermostat</span> Temperature
+          </div>
+          <div class="metric-value">0 <span class="unit">° C</span></div>
+        </div>
+        <div class="card metric-card" id="humidity">
+          <div class="card-header">
+            <span class="icon">cloud</span> Humidity
+          </div>
+          <div class="metric-value">0 <span class="unit">%</span></div>
+        </div>
+        <div class="card orientation-card">
+          <div class="card-header">
+            <span class="icon">explore</span> Orientation
+          </div>
+          <div class="orientation-table">
+            <div><span>Pitch</span> <span id="pitch">0°</span></div>
+            <div><span>Roll</span> <span id="roll">0°</span></div>
+            <div><span>Yaw</span> <span id="yaw">0°</span></div>
+            <div><span>Bearing</span> <span id="bearing">0°</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="side-panel">
+        <div class="card position-card">
+          <div class="card-header">
+            <span class="icon">location_on</span> Position
+          </div>
+          <div class="coords">
+            <span id="lat">S 0° 0' 0"</span>
+            <span id="lon">W 0° 0' 0"</span>
+          </div>
+          <div id="map"></div>
+        </div>
+      </section>
+
+      <section class="bottom-row">
+        <div class="card graph-card">
+          <div class="card-header">
+            <div class="title-group">
+              <span class="icon">show_chart</span> Real-time Graph
+            </div>
+            <div class="graph-filters">
+              <button class="filter-btn active" data-dataset="0">
+                Altitude
+              </button>
+              <button class="filter-btn" data-dataset="1">Speed</button>
+              <button class="filter-btn" data-dataset="2">Power</button>
+              <button class="filter-btn" data-dataset="3">Temperature</button>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="telemetryChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card camera-card">
+          <div class="card-header">
+            <div class="title-group">
+              <span class="icon">videocam</span> Camera
+            </div>
+            <select id="camera-select" class="device-select">
+              <option value="">Select Camera</option>
+            </select>
+          </div>
+          <div class="camera-stream">
+            <video id="webcam" autoplay playsinline></video>
+            <div class="camera-overlay">REC</div>
+          </div>
+        </div>
+
+        <div class="card alerts-card">
+          <div class="card-header">
+            <span class="icon">warning</span> Alerts/Critical Info
+          </div>
+          <div class="alerts-content">
+            <div class="alert-list">
+              <h3>Alerts</h3>
+              <ul id="alerts">
+                <li>Low Altitude</li>
+                <li>Low Battery</li>
+              </ul>
+            </div>
+            <div class="critical-info">
+              <h3>Critical Info</h3>
+              <p>Latency: <span id="latency">0 ms</span></p>
+              <p>Current Command: <span id="command">Manual Control</span></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>
