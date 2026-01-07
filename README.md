@@ -90,11 +90,17 @@ Any peripheral is acceptable provided it can be read by the ESP32 microcontrolle
 
 ### How is the visualization and telemetry application used?
 
-Currently, the `.exe` packaging is a Work In Progress (WIP). For the time being, you may execute the following command:
+You can use the pre-built `.exe` installer found in the `out/make/squirrel.windows/x64` directory (after building) or run it from source.
 
-1. Download the [XDF-001_Control](XDF-001_Control/) folder.
-2. Open the terminal and execute the following command: `cd XDF-001_Control`.
-3. Make sure that you have Node.js and npm installed. If not, you can download it from [here](https://nodejs.org/).
-4. Execute the following command: `npm install`.
-5. Execute the following command: `npm start`.
-6. Anytime that you want to run the aplication execute `npm start` from the terminal in the directory `XDF-001_Control`.
+#### Option 1: Run from Executable
+
+1. Locate the installer in the `XDF-001_Control/out/make/squirrel.windows/x64/` directory.
+2. Run the installer to set up the application.
+3. Launch `XDF-001_Control` from your desktop or start menu.
+
+#### Option 2: Run from Source
+
+1. **Prerequisites**: Ensure [Node.js](https://nodejs.org/) (LTS version) is installed.
+2. Navigate to the project directory: `cd XDF-001_Control`.
+3. Install dependencies: `npm install`.
+4. Start the application: `npm start`.
