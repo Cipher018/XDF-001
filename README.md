@@ -91,3 +91,10 @@ Any peripheral is acceptable provided it can be read by the ESP32 microcontrolle
 ### How is the visualization and telemetry application used?
 
 Currently, the `.exe` packaging is a Work In Progress (WIP). For the time being, you may execute the following command:
+
+1. Download the [XDF-001_Control](XDF-001_Control/) folder.
+2. Open the terminal and execute the following command: `cd XDF-001_Control`.
+3. Make sure that you have Node.js and npm installed. If not, you can download it from [here](https://nodejs.org/).
+4. Execute the following command: `npm install`.
+5. Execute the following command: `npm start`.
+6. Anytime that you want to run the aplication execute `npm start` from the terminal in the directory `XDF-001_Control`.
