@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
@@ -119,6 +119,9 @@
               <button class="filter-btn" data-dataset="1">Speed</button>
               <button class="filter-btn" data-dataset="2">Power</button>
               <button class="filter-btn" data-dataset="3">Temperature</button>
+              <button id="open-export" class="icon-btn" title="Export CSV Data">
+                <span class="icon">file_download</span>
+              </button>
             </div>
           </div>
           <div class="chart-container">
@@ -162,6 +165,100 @@
         </div>
       </section>
     </main>
+
+    <!-- Export Modal -->
+    <div id="export-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="icon">settings_applications</span>
+          <h2>Export Configuration</h2>
+        </div>
+        <div class="modal-body">
+          <div class="config-section">
+            <label>Select Variables to Export:</label>
+            <div class="checkbox-grid">
+              <label
+                ><input
+                  type="checkbox"
+                  name="export-var"
+                  value="timestamp"
+                  checked
+                  disabled
+                />
+                Time (Elapsed)</label
+              >
+              <label
+                ><input type="checkbox" name="export-var" value="alt" checked />
+                Altitude</label
+              >
+              <label
+                ><input
+                  type="checkbox"
+                  name="export-var"
+                  value="speed"
+                  checked
+                />
+                Speed</label
+              >
+              <label
+                ><input
+                  type="checkbox"
+                  name="export-var"
+                  value="temp"
+                  checked
+                />
+                Temperature</label
+              >
+              <label
+                ><input type="checkbox" name="export-var" value="pitch" />
+                Pitch</label
+              >
+              <label
+                ><input type="checkbox" name="export-var" value="roll" />
+                Roll</label
+              >
+              <label
+                ><input type="checkbox" name="export-var" value="yaw" />
+                Yaw</label
+              >
+              <label
+                ><input type="checkbox" name="export-var" value="bearing" />
+                Bearing</label
+              >
+            </div>
+          </div>
+          <div class="config-section">
+            <label>Time Range (MM:SS):</label>
+            <div class="range-inputs">
+              <input
+                type="text"
+                id="export-start"
+                placeholder="00:00"
+                value="00:00"
+              />
+              <span>to</span>
+              <input type="text" id="export-end" placeholder="Now" />
+            </div>
+          </div>
+          <div class="config-section">
+            <label>Save To:</label>
+            <div class="path-selector">
+              <input
+                type="text"
+                id="export-path"
+                readonly
+                placeholder="Click Browse to select..."
+              />
+              <button id="browse-path" class="small-btn">Browse</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="close-export" class="secondary-btn">Cancel</button>
+          <button id="confirm-export" class="primary-btn">Export CSV</button>
+        </div>
+      </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

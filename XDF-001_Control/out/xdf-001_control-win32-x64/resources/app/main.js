@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const { SerialPort } = require("serialport");
 const { ReadlineParser } = require("@serialport/parser-readline");
+const { dialog } = require("electron");
+const fs = require("fs");
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -71,6 +73,24 @@ ipcMain.handle("list-ports", async () => {
     return ports;
   } catch (error) {
     return [];
+  }
+});
+
+ipcMain.handle("select-save-path", async () => {
+  const { filePath } = await dialog.showSaveDialog({
+    title: "Export Telemetry Data",
+    defaultPath: path.join(app.getPath("documents"), "telemetry_data.csv"),
+    filters: [{ name: "CSV Files", extensions: ["csv"] }],
+  });
+  return filePath;
+});
+
+ipcMain.handle("save-csv-file", async (event, filePath, content) => {
+  try {
+    fs.writeFileSync(filePath, content, "utf8");
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });
 

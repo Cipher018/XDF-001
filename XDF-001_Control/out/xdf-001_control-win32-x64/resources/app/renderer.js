@@ -1,3 +1,14 @@
+// Session tracking
+const appStartTime = Date.now();
+const telemetryLog = []; // Stores all received data points
+
+function formatElapsed(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
 // Leaflet Map Initialization
 const map = L.map('map', {
     zoomControl: false,
@@ -218,8 +229,9 @@ window.electronAPI.onTelemetryData((data) => {
     document.getElementById('lon').innerText = `Lon: ${lon.toFixed(4)}`;
 
     // Update Chart
-    const now = new Date().toLocaleTimeString();
-    telemetryChart.data.labels.push(now);
+    const elapsedMs = Date.now() - appStartTime;
+    const formattedTime = formatElapsed(elapsedMs);
+    telemetryChart.data.labels.push(formattedTime);
     
     // Dataset 0: Altitude
     telemetryChart.data.datasets[0].data.push(alt);
@@ -230,6 +242,13 @@ window.electronAPI.onTelemetryData((data) => {
     // Dataset 3: Temperature
     telemetryChart.data.datasets[3].data.push(temp);
 
+    // Update Log for CSV Export
+    telemetryLog.push({
+        elapsed: formattedTime,
+        ms: elapsedMs,
+        lat, lon, alt, state, temp, speed, pitch, roll, yaw, bearing
+    });
+
     if (telemetryChart.data.labels.length > 20) {
         telemetryChart.data.labels.shift();
         telemetryChart.data.datasets.forEach(ds => ds.data.shift());
@@ -238,7 +257,6 @@ window.electronAPI.onTelemetryData((data) => {
 });
 
 // Fake data simulation for testing UI (Remove or comment out when real data is coming)
-/*
 setInterval(() => {
     const fakeData = [
         -33.456 + (Math.random() * 0.01), // Lat
@@ -259,4 +277,72 @@ window.addEventListener('fake-telemetry', (e) => {
     // This is just to test without actual serial bridge if needed
     // In a real app index.js (preload) would bridge this
 });
-*/
+// Export Modal Logic
+const exportModal = document.getElementById('export-modal');
+const openExportBtn = document.getElementById('open-export');
+const closeExportBtn = document.getElementById('close-export');
+const browsePathBtn = document.getElementById('browse-path');
+const confirmExportBtn = document.getElementById('confirm-export');
+const exportPathInput = document.getElementById('export-path');
+
+openExportBtn.addEventListener('click', () => {
+    exportModal.classList.add('active');
+    // Set default end time to current elapsed
+    const lastPoint = telemetryLog[telemetryLog.length - 1];
+    if (lastPoint) {
+        document.getElementById('export-end').value = lastPoint.elapsed;
+    }
+});
+
+closeExportBtn.addEventListener('click', () => {
+    exportModal.classList.remove('active');
+});
+
+browsePathBtn.addEventListener('click', async () => {
+    const path = await window.electronAPI.selectSavePath();
+    if (path) {
+        exportPathInput.value = path;
+    }
+});
+
+confirmExportBtn.addEventListener('click', async () => {
+    const path = exportPathInput.value;
+    if (!path) {
+        alert('Please select a save path first.');
+        return;
+    }
+
+    const selectedStartTime = document.getElementById('export-start').value;
+    const selectedEndTime = document.getElementById('export-end').value;
+    const selectedVars = Array.from(document.querySelectorAll('input[name="export-var"]:checked'))
+                              .map(cb => cb.value);
+
+    // Convert MM:SS to ms for easier comparison if needed, or just use string comparison for simplicity if they match format
+    const filteredData = telemetryLog.filter(point => {
+        return point.elapsed >= selectedStartTime && (selectedEndTime === "Now" || point.elapsed <= selectedEndTime);
+    });
+
+    if (filteredData.length === 0) {
+        alert('No data found for the selected time range.');
+        return;
+    }
+
+    // Generate CSV
+    const headers = selectedVars.join(',');
+    const rows = filteredData.map(point => {
+        return selectedVars.map(v => {
+            if (v === 'timestamp') return point.elapsed;
+            return point[v];
+        }).join(',');
+    });
+
+    const csvContent = headers + '\n' + rows.join('\n');
+
+    const result = await window.electronAPI.saveCSVFile(path, csvContent);
+    if (result.success) {
+        alert('Data exported successfully!');
+        exportModal.classList.remove('active');
+    } else {
+        alert('Error exporting data: ' + result.error);
+    }
+});
