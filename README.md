@@ -90,17 +90,35 @@ Any peripheral is acceptable provided it can be read by the ESP32 microcontrolle
 
 ### How is the visualization and telemetry application used?
 
-You can use the pre-built `.exe` installer found in the `out/make/squirrel.windows/x64` directory (after building) or run it from source.
+#### User Mode (Run Executable)
 
-#### Option 1: Run from Executable
+To use the application as a final user:
 
-1. Locate the installer in the `XDF-001_Control/out/make/squirrel.windows/x64/` directory.
-2. Run the installer to set up the application.
-3. Launch `XDF-001_Control` from your desktop or start menu.
+**Option A: Installer (Recommended)**
 
-#### Option 2: Run from Source
+1. Navigate to `XDF-001_Control/out/make/squirrel.windows/x64/`.
+2. Run `xdf-001_control-1.0.0 Setup.exe`.
+3. The app will install and open automatically.
 
-1. **Prerequisites**: Ensure [Node.js](https://nodejs.org/) (LTS version) is installed.
-2. Navigate to the project directory: `cd XDF-001_Control`.
+**Option B: Portable (Direct Run)**
+
+1. Navigate to `XDF-001_Control/out/xdf-001_control-win32-x64/`.
+2. Run `xdf-001_control.exe` directly.
+3. No installation required. (You can also share the `out/make/zip` file).
+
+#### Developer Mode (Run from Source)
+
+If you want to modify the code or debug:
+
+1. **Prerequisites**: Ensure [Node.js](https://nodejs.org/) (LTS) is installed.
+2. Open a terminal in `XDF-001_Control`.
 3. Install dependencies: `npm install`.
-4. Start the application: `npm start`.
+4. Start the app: `npm start`.
+
+#### Build Mode (Create Executable)
+
+To generate the `.exe` file yourself:
+
+1. Follow the **Developer Mode** steps to set up the environment.
+2. Run the build command: `npm run make`.
+3. The output files will be created in the `out/` folder.
