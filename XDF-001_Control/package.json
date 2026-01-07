@@ -21,6 +21,8 @@
     "@electron-forge/cli": "^7.3.0",
     "@electron-forge/maker-squirrel": "^7.3.0",
     "@electron-forge/maker-zip": "^7.3.0",
-    "electron": "28.2.0"
+    "electron": "28.2.0",
+    "jpeg-js": "^0.4.4",
+    "png-to-ico": "^3.0.1"
   }
 }

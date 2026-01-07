@@ -13,7 +13,7 @@ function createWindow() {
       nodeIntegration: false,
     },
     backgroundColor: "#000000",
-    icon: path.join(__dirname, "assets/icon.png"), // Fallback if no icon
+    icon: path.join(__dirname, "assets/icon.ico"), // Fallback if no icon
   });
 
   win.loadFile("index.html");
