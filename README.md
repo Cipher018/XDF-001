@@ -1,62 +1,69 @@
 # XDF-001
 
----
-
 ## Introduction
 
-### Objectives
+### What is XDF-001?
 
-The primary objective of this project is to develop an experimental drone based on the ESP32 ecosystem architecture. This involves utilizing a radio frequency communication protocol and integrating an open-source application for real-time telemetry and video visualization, with capabilities to interface with Excel or SQL databases. Furthermore, the project aims to test the implementation of autonomous functions, ranging from simple maneuvers like flight path planning and point orbiting to more complex actions such as payload release, utilizing vector and geometric operations.
+The **XDF-001**, or **Experimental Drone Fighter Model 001**, is a flight platform based on the P-51 Mustang airframe. Its experimental objective is to achieve a multi-role aircraft capable of both aerobatic flight and payload transport. Additionally, the XDF-001 platform seeks to demonstrate the viability of implementing simple autonomous capabilities in RC drones using vector operations, alongside data visualization via the **XDF-001 Control** application.
 
 ### Motivation
 
-The core motivation for this project arises from a passion for military aviation and a commitment to addressing the economic barriers prevalent in modern aeromodelling. Developing a drone within the ESP32 ecosystem facilitates the iteration of this architecture across diverse projects. Although this specific iteration incurs a higher cost due to the platform's dimensions, subsequent iterations focused on micro-drones or smaller scale vehicles would be significantly more cost-effective.
+The motivation for this project stems from an interest in military aviation and aeronautics, as well as addressing the economic barriers within the RC aircraft community. Developing an aircraft within the ESP32 ecosystem helps overcome financial constraints, enabling the transition beyond typical 8-inch drones to larger-scale aircraft at equally competitive prices.
 
-Another key motivation is the versatility of the drone for various applications, including surveillance, package delivery, and aerobatic exhibitions, leveraging its aerodynamic and high-performance design.
+Another key motivation is the code's iterative potential; it can be adapted and modified for a myriad of missions and other types of aircraft and vehicles, allowing for extensive iteration and versatility.
+
+### Objectives
+
+The primary objective is to develop a fixed-wing platform based on the ESP32 ecosystem, capable of both radio control and simple autonomous maneuvers such as waypoint navigation or orbiting.
+
+The secondary objectives are:
+
+- Development of a telemetry visualization and control application for the flight platform.
+- Study of various aerodynamic configurations to maximize the stability-to-top-speed ratio.
+- Study of ESP32 behavior in handling real-time vector operations and autonomous capabilities.
+- Development of a payload bay within the platform for payload transport.
 
 ### Architecture
 
-The architecture of this project is founded on the ESP32 ecosystem, employing a radio frequency communication protocol and an open-source software application that enables real-time visualization of telemetry and video. It includes the capability to link with Excel or SQL databases. This facilitates a myriad of applications, from video recording and recreational flying to atmospheric data collection and air quality monitoring. The ESP32's connectivity allows it to interface with various devices, such as another ESP32 measuring air quality variables, and transmit this data to the ground station.
-
-In its simplest form, this project consists of a ground segment, which receives telemetry and transmits commands to the drone, and an air segment, which reads the telemetry and executes the commands sent from the ground.
-
----
+As previously mentioned, the project is based on the ESP32 ecosystem and programmed using the Arduino IDE. However, communication between the ground ESP32 and the PC utilizes a binary system, enabling both command transmission and telemetry reception via USB serial. For a comprehensive study of the firmware architecture, please refer to the **[Documentation](Documentation/)** folder: check the diagrams section for data flows or the PDF section for function documentation.
 
 ## Project Parts
 
+Below is a brief description of the repository's main folders and their contents:
+
 ### [CAD](CAD/)
 
-Contains all 3D models and design files for the mechanical structure.
-
-### [Construction Manual](Construction%20Manual/)
-
-Step-by-step guides and instructions for assembling the drone hardware.
+Contains all CAD modeling files, including the root file modeled in FreeCAD and `.stp` files for the aircraft and PCB, as well as 3D models for the modules used.
 
 ### [Firmware](Firmware/)
 
-Source code for the ESP32 microcontrollers, including flight control logic.
+Contains all ESP32 code, divided into air and ground sections. This includes communication functions, vector calculations, etc.
 
 ### [PCB](PCB/)
 
-Schematics, board layouts, and manufacturing files for the custom electronics.
+Contains all electronics-related files, including schematics, `.pcb` files, and manufacturing Gerbers.
+
+### [XDF-001 Control](XDF-001_Control/)
+
+Dedicated strictly to the visualization and control application. Contains all backend and frontend code.
 
 ### [References](References/)
 
-Datasheets, technical papers, and external resources used in the project.
+Contains all structural references and concepts adopted from various creators for the project's construction.
 
-### [XDF-001_Control](XDF-001_Control/)
+### [Documentation](Documentation/)
 
-Control software and telemetry dashboard interface.
+Contains flowcharts and a detailed PDF explaining the application code, autonomous functions, and vector-based calculations.
 
----
+### [Construction Manual](Construction%20Manual/)
+
+PDF file detailing the aircraft construction method and key considerations for assembly.
 
 ## Changelog
 
 ### V0.0
 
 Base project files have been exported, including code prototypes for both the ground and air sections. This release also includes the prototype for the control and telemetry application, as well as the PCB rendering, schematics, and CAD files.
-
----
 
 ## Roadmap
 
