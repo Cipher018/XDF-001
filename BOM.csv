@@ -1,0 +1,30 @@
+Item;Description;Quantity ;Unit price;Total Price;Source;Running Total ($ with Tax)
+ESP-32 Devkit 38 pins;Dev board that will allow processing of telemetry, air-to-ground communication and autonomous operations based on vector operations;1;4,23;4,23;Aliexpress;5,03
+PCA9685 Servomotor Driver;Servomotor driver that allows control of up to 16 servomotors using only 2 pins, mainly used to avoid using all the pins of the ESP32 and for more sophisticated control via binary control;1;1,2;1,2;Aliexpress;1,43
+nRF24l01+PLA Module;"Radio module that allows medium-range air-to-ground communication without major interference; a PLA antenna is added to maximize range.";2;2,31;4,62;Aliexpress;5,5
+NEO6M GPS Module;GPS module that allows knowing the exact position of the aircraft along with its speed and altitude, key for both vector calculation and telemetry;1;2,33;2,33;Aliexpress;2,77
+MP1584EN Module;The 3.3 Volt voltage regulator allows for the safe and continuous powering of sensitive modules such as the nrf24l01 directly from the VEC.;1;0,67;0,67;Aliexpress;0,8
+MPU-9250 Module;Magnetometer, gyroscope and accelerometer that will allow knowing the orientation and acceleration that the plane suffers in flight, also key for vector calculation thanks to being able to know the heading;1;2,31;2,31;Aliexpress;2,75
+4 pcs MG90S Servomotor;Servomotors with metal gears that allow for high-performance and precise movement of control surfaces;2;7,26;14,52;Aliexpress;17,28
+NEEBRC 3542 1000KV  2-4S Outrunner Brushless Motor for RC Fixed Wing Airplane;A brushless motor that generates thrust for the aircraft was chosen in this case due to the aircraft's dimensions.It includes ESC and VEC which allows control via a microcontroller and voltage regulation from the LiPo battery.;1;39,52;39,52;Aliexpress;47,03
+AERONAUT CAM CARBON LIGHT 11/5 CLOCKWISE CW Popeller;Light carbon propeller designed to generate the maximum amount of thrust efficiently;1;6,9;6,9;Lindinger;8,21
+20pcs/lot nylon and tin-plated hinge board 12x24mm;Nylon hinges that allow free and controlled movement of the control surfaces;2;0,99;1,98;Aliexpress;2,36
+LiPo Battery 3S 11.1V 2200mAh XT60;High-performance lithium polymer battery allowing sufficient voltage and current to be delivered to the motor thanks to its high discharge rate;1;19,57;19,57;Aliexpress;23,29
+IMAX B3 PRO 7.4V/11.1V 2S 3S 110-240V Compact Lipo Battery Balance Charger;The charger allows you to both balance and charge the LiPo battery safely.;1;4,62;4,62;Aliexpress;5,5
+RC FPV Micro Camera AIO 5.8G 25MW 40CH 800TVL Transmitter LST-S4 + FPV Camera with OSD Parts for Racing Drone;AIO system for video recording and transmission, allows for a stable video signal;1;14,65;14,65;Aliexpress;17,43
+RC832 Video Image Transmission Receiver, SKY 32S 5.8G FPV Wireless Upgrade;Video receiver to process the image and transform it into a USB signal for the application;1;18,99;18,99;Aliexpress;22,6
+"1/16""*3""*42"" Balsa Sheet";Construction material, in this case mainly for the fuselage;2;2,78;5,56;Balsa USA;6,62
+"1/8""*3""*24"" Balsa Sheet";Construction material, in this case mainly for the fuselage;2;2,03;4,06;Balsa USA;4,83
+"1/4""*3""*24"" Balsa Sheet";Reinforcements for the control surfaces and fuselage;1;3,16;3,16;Balsa USA;3,76
+"1/8""*1/8""*36"" Balsa Strip";Reinforcements for the control surfaces and fuselage;4;0,61;2,44;Balsa USA;2,9
+"1/2""*1/2""*36"" Balsa Strip";Reinforcements for the control surfaces and fuselage;2;2,46;4,92;Balsa USA;5,85
+PCB;Circuit board to house all the electronics inside the aircraft;1;12,1;12,1;JLCPCB;12,1
+;;;;;;
+;;;;;;
+;;;;;;
+;;;;;;
+;;;;;;
+;;;;;;
+;;;;;;
+;;;;;;
+;3;;;;;

@@ -61,22 +61,18 @@ PDF file detailing the aircraft construction method and key considerations for a
 
 ## Changelog
 
-### V0.0
+### V0.0.0
 
 Base project files have been exported, including code prototypes for both the ground and air sections. This release also includes the prototype for the control and telemetry application, as well as the PCB rendering, schematics, and CAD files.
 
 ## Roadmap
 
-### V0
-
-Base project files have been exported, including code prototypes for both the ground and air sections. This release also includes the prototype for the control and telemetry application, as well as the PCB rendering, schematics, and CAD files.
-
-### V0.1
+### V0.1.0
 
 Completion of integration with Excel and SQL databases for the control and telemetry application.
 Theoretical completion of the ground and air section code, enabling remote flight capabilities without telemetry and video visualization.
 
-### V0.2
+### V0.2.0
 
 Achievement of initial flight tests, featuring full integration between the ground section and the control and telemetry application.
 Initial implementation of autonomous functions, such as navigating to a designated point at a predefined altitude.
