@@ -45,6 +45,8 @@ Contains all ESP32 code, divided into air and ground sections. This includes com
 
 Contains all electronics-related files, including schematics, `.pcb` files, and manufacturing Gerbers.
 ![PCB Render](PCB/Images/Imagen_PCB.png)
+![Wiring Diagram](PCB/Images/Wiring_Diagram.svg)
+Referencial Wiring Diagram of the aircraft
 
 ### [XDF-001 Control](XDF-001_Control/)
 
