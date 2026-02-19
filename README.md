@@ -34,8 +34,8 @@ Below is a brief description of the repository's main folders and their contents
 ### [CAD](CAD/)
 
 Contains all CAD modeling files, including the root file modeled in FreeCAD and `.stp` files for the aircraft and PCB, as well as 3D models for the modules used.
-!(CAD/Images/CAD1.png)
-!(CAD/Images/CAD2.png)
+![CAD Model 1](CAD/Images/CAD1.png)
+![CAD Model 2](CAD/Images/CAD2.png)
 
 ### [Firmware](Firmware/)
 
@@ -44,7 +44,7 @@ Contains all ESP32 code, divided into air and ground sections. This includes com
 ### [PCB](PCB/)
 
 Contains all electronics-related files, including schematics, `.pcb` files, and manufacturing Gerbers.
-!(PCB/Images/Imagen_PCB.png)
+![PCB Render](PCB/Images/Imagen_PCB.png)
 
 ### [XDF-001 Control](XDF-001_Control/)
 
