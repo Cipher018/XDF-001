@@ -47,7 +47,7 @@ Contains all electronics-related files, including schematics, `.pcb` files, and 
 ![PCB Schematic](PCB/Images/Schematic.png)
 PCB Schematic
 ![PCB Front Layer](PCB/Images/PCB_FrontLayer.png)
-PCB Fron layer
+PCB Front layer
 ![PCB Back Layer](PCB/Images/PCB_BottomLayer.png)
 PCB Back Layer
 ![PCB Top view](PCB/Images/PCB_TopView.png)
