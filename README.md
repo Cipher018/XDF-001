@@ -44,7 +44,16 @@ Contains all ESP32 code, divided into air and ground sections. This includes com
 ### [PCB](PCB/)
 
 Contains all electronics-related files, including schematics, `.pcb` files, and manufacturing Gerbers.
-![PCB Render](PCB/Images/Imagen_PCB.png)
+![PCB Schematic](PCB/Images/Schematic.png)
+PCB Schematic
+![PCB Front Layer](PCB/Images/PCB_FrontLayer.png)
+PCB Fron layer
+![PCB Back Layer](PCB/Images/PCB_BottomLayer.png)
+PCB Back Layer
+![PCB Top view](PCB/Images/PCB_TopView.png)
+PCB Top view
+![PCB Bottom](PCB/Images/PCB_BottomView.png)
+PCB Bottom view
 ![Wiring Diagram](PCB/Images/Wiring_Diagram.svg)
 Referencial Wiring Diagram of the aircraft
 
