@@ -34,8 +34,18 @@ Below is a brief description of the repository's main folders and their contents
 ### [CAD](CAD/)
 
 Contains all CAD modeling files, including the root file modeled in FreeCAD and `.stp` files for the aircraft and PCB, as well as 3D models for the modules used.
-![CAD Model 1](CAD/Images/CAD1.png)
-![CAD Model 2](CAD/Images/CAD2.png)
+
+<p align="center">
+  <img src="CAD/Images/CAD1.png" alt="CAD Model 1" width="800">
+  <br>
+  <em>CAD Model 1</em>
+</p>
+
+<p align="center">
+  <img src="CAD/Images/CAD2.png" alt="CAD Model 2" width="800">
+  <br>
+  <em>CAD Model 2</em>
+</p>
 
 ### [Firmware](Firmware/)
 
@@ -44,18 +54,42 @@ Contains all ESP32 code, divided into air and ground sections. This includes com
 ### [PCB](PCB/)
 
 Contains all electronics-related files, including schematics, `.pcb` files, and manufacturing Gerbers.
-![PCB Schematic](PCB/Images/Schematic.png)
-PCB Schematic
-![PCB Front Layer](PCB/Images/PCB_FrontLayer.png)
-PCB Front layer
-![PCB Back Layer](PCB/Images/PCB_BottomLayer.png)
-PCB Back Layer
-![PCB Top view](PCB/Images/PCB_TopView.png)
-PCB Top view
-![PCB Bottom](PCB/Images/PCB_BottomView.png)
-PCB Bottom view
-![Wiring Diagram](PCB/Images/Wiring_Diagram.svg)
-Referencial Wiring Diagram of the aircraft
+
+<p align="center">
+  <img src="PCB/Images/Schematic.png" alt="PCB Schematic" width="800">
+  <br>
+  <em>PCB Schematic</em>
+</p>
+
+<p align="center">
+  <img src="PCB/Images/PCB_FrontLayer.png" alt="PCB Front Layer" width="800">
+  <br>
+  <em>PCB Front layer</em>
+</p>
+
+<p align="center">
+  <img src="PCB/Images/PCB_BottomLayer.png" alt="PCB Back Layer" width="800">
+  <br>
+  <em>PCB Back Layer</em>
+</p>
+
+<p align="center">
+  <img src="PCB/Images/PCB_TopView.png" alt="PCB Top view" width="800">
+  <br>
+  <em>PCB Top view</em>
+</p>
+
+<p align="center">
+  <img src="PCB/Images/PCB_BottomView.png" alt="PCB Bottom" width="800">
+  <br>
+  <em>PCB Bottom view</em>
+</p>
+
+<p align="center">
+  <img src="PCB/Images/Wiring_Diagram.svg" alt="Wiring Diagram" width="800">
+  <br>
+  <em>Referential Wiring Diagram of the aircraft</em>
+</p>
 
 ### [XDF-001 Control](XDF-001_Control/)
 
