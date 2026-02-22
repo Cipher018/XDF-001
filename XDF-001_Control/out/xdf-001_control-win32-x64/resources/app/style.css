@@ -539,3 +539,302 @@ header {
 .secondary-btn:hover {
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* =========================================
+   VIEWS CONTAINER
+   ========================================= */
+#views-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* =========================================
+   COMMANDS DASHBOARD LAYOUT
+   ========================================= */
+.commands-dashboard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  overflow: hidden;
+}
+
+.commands-top-row {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.mission-plan-row {
+  height: 220px;
+  flex-shrink: 0;
+}
+
+/* =========================================
+   ORDERS CARD
+   ========================================= */
+.orders-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.current-order {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.current-order span {
+  color: var(--accent-color);
+  font-weight: bold;
+}
+
+.new-order-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.new-order-section h3 {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+.order-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.order-btn {
+  background: rgba(69, 137, 245, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--accent-color);
+  padding: 7px 18px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: var(--font-main);
+  transition: all 0.25s;
+}
+
+.order-btn:hover,
+.order-btn.selected {
+  background: rgba(69, 137, 245, 0.25);
+  border-color: var(--accent-color);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(69, 137, 245, 0.3);
+}
+
+/* Order inputs */
+.order-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.input-group label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  min-width: 110px;
+  text-align: right;
+}
+
+.input-group input {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-family: var(--font-main);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-group input:focus {
+  border-color: var(--accent-color);
+}
+
+.input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.input-wrapper input {
+  flex: 1;
+}
+
+.input-suffix {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.btn-center {
+  display: flex;
+  justify-content: center;
+  margin-top: auto;
+}
+
+/* Enable send button click glow */
+#send-command-btn {
+  padding: 8px 36px;
+  letter-spacing: 1px;
+}
+
+#send-command-btn:active {
+  box-shadow: 0 0 25px var(--accent-color);
+  transform: scale(0.97);
+}
+
+/* =========================================
+   MISSION MAP
+   ========================================= */
+.mission-map-container {
+  flex: 1;
+  width: 100%;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  cursor: crosshair;
+}
+
+/* =========================================
+   MISSION PLAN CARD
+   ========================================= */
+.mission-plan-card {
+  height: 100%;
+  overflow: hidden;
+}
+
+.current-waypoint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.current-waypoint span {
+  color: var(--accent-color);
+  font-weight: bold;
+}
+
+.waypoints-list {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  align-content: start;
+}
+
+.waypoints-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.waypoints-list::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 2px;
+}
+
+.waypoint-item {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  transition: border-color 0.2s;
+}
+
+.waypoint-item:hover {
+  border-color: var(--accent-color);
+  color: var(--text-primary);
+}
+
+.waypoint-item.active-wp {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: rgba(69, 137, 245, 0.1);
+}
+
+.waypoint-item.empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 1rem;
+  border-style: dashed;
+}
+
+.waypoint-item .wp-number {
+  font-weight: bold;
+  color: var(--accent-color);
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* =========================================
+   DIRECTION TOGGLE (CW / CCW)
+   ========================================= */
+.direction-toggle {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.dir-btn {
+  background: rgba(69, 137, 245, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: var(--font-main);
+  transition: all 0.2s;
+}
+
+.dir-btn.selected {
+  background: rgba(69, 137, 245, 0.25);
+  border-color: var(--accent-color);
+  color: #fff;
+  box-shadow: 0 0 8px rgba(69, 137, 245, 0.3);
+}
+
+.dir-btn:hover:not(.selected) {
+  background: rgba(69, 137, 245, 0.1);
+  color: var(--text-primary);
+}
+
+/* Remove spinners from all text inputs with numeric inputmode */
+input[inputmode="numeric"] {
+  -moz-appearance: textfield;
+}
+input[inputmode="numeric"]::-webkit-outer-spin-button,
+input[inputmode="numeric"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}

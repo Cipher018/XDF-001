@@ -9,17 +9,53 @@ function formatElapsed(ms) {
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
-// Leaflet Map Initialization
+// =============================================
+// MAP SETUP – Telemetry Map
+// =============================================
 const map = L.map('map', {
     zoomControl: false,
     attributionControl: false
-}).setView([0, 0], 2);
+}).setView([-33.456, -70.648], 15);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+// Dark high-contrast tile layer
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
 }).addTo(map);
 
-const droneMarker = L.marker([0, 0]).addTo(map);
+// Custom drone icon for telemetry map
+const droneIcon = L.divIcon({
+    className: '',
+    html: `<div style="
+        width:18px;height:18px;
+        border-radius:50%;
+        background:radial-gradient(circle, #00e5ff 0%, #4589f5 60%, rgba(69,137,245,0) 100%);
+        box-shadow:0 0 12px #00e5ff, 0 0 24px rgba(0,229,255,0.5);
+        border:2px solid #fff;
+    "></div>`,
+    iconAnchor: [9, 9]
+});
+const droneMarker = L.marker([-33.456, -70.648], { icon: droneIcon }).addTo(map);
+
+// Trail polyline for telemetry map
+const MAX_TRAIL_POINTS = 80;
+const trailPoints = [];
+const droneTrail = L.polyline([], {
+    color: '#00e5ff',
+    weight: 2,
+    opacity: 0.6,
+    dashArray: '4 4'
+}).addTo(map);
+
+function updateTrail(lat, lon) {
+    trailPoints.push([lat, lon]);
+    if (trailPoints.length > MAX_TRAIL_POINTS) trailPoints.shift();
+    droneTrail.setLatLngs(trailPoints);
+    // Sync mission map trail if initialized
+    if (missionTrail) {
+        missionTrail.setLatLngs(trailPoints);
+        if (missionDroneMarker) missionDroneMarker.setLatLng([lat, lon]);
+    }
+}
 
 // Chart.js Initialization
 const ctx = document.getElementById('telemetryChart').getContext('2d');
@@ -204,29 +240,56 @@ listPorts();
 
 // Telemetry Handling
 window.electronAPI.onTelemetryData((data) => {
-    // Expected Data Format: [Latitude, Longitude, Altitude, State, Temperature, Speed, Pitch, Roll, Yaw, Bearing]
-    
-    if (!Array.isArray(data) || data.length < 10) return;
+    // Expected Data Format: Object
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
 
-    const [lat, lon, alt, state, temp, speed, pitch, roll, yaw, bearing] = data;
+    const {
+        latitude: lat,
+        longitude: lon,
+        altitude: alt,
+        yaw,
+        pitch,
+        gforce,
+        velocity_mag,
+        currentMode,
+        cmd_throttle
+    } = data;
+
+    const modes = ["Manual", "Waypoint", "Orbit"];
+    const state = modes[currentMode] || "Unknown";
+    const speed = velocity_mag * 3.6; // Convert m/s to Km/h
+    const roll = 0; // Not available from drone yet
+    const bearing = yaw;
 
     // Update Metrics
-    document.querySelector('#altitude .metric-value').innerHTML = `${alt} <span class="unit">m</span>`;
-    document.querySelector('#speed .metric-value').innerHTML = `${speed} <span class="unit">Km/h</span>`;
-    document.querySelector('#temperature .metric-value').innerHTML = `${temp} <span class="unit">° C</span>`;
+    document.querySelector('#altitude .metric-value').innerHTML = `${alt.toFixed(1)} <span class="unit">m</span>`;
+    document.querySelector('#speed .metric-value').innerHTML = `${speed.toFixed(1)} <span class="unit">Km/h</span>`;
+    document.querySelector('#temperature .metric-value').innerHTML = `${gforce.toFixed(2)} <span class="unit">g</span>`;
 
     // Update Orientation
-    document.getElementById('pitch').innerText = `${pitch}°`;
-    document.getElementById('roll').innerText = `${roll}°`;
-    document.getElementById('yaw').innerText = `${yaw}°`;
-    document.getElementById('bearing').innerText = `${bearing}°`;
+    document.getElementById('pitch').innerText = `${pitch.toFixed(1)}°`;
+    document.getElementById('roll').innerText = `${roll.toFixed(1)}°`;
+    document.getElementById('yaw').innerText = `${yaw.toFixed(1)}°`;
+    document.getElementById('bearing').innerText = `${bearing.toFixed(1)}°`;
 
     // Update Map
     const coords = [lat, lon];
     droneMarker.setLatLng(coords);
     map.panTo(coords);
-    document.getElementById('lat').innerText = `Lat: ${lat.toFixed(4)}`;
-    document.getElementById('lon').innerText = `Lon: ${lon.toFixed(4)}`;
+    document.getElementById('lat').innerText = `Lat: ${lat.toFixed(6)}`;
+    document.getElementById('lon').innerText = `Lon: ${lon.toFixed(6)}`;
+    document.querySelector('.drone-status').innerText = `State: ${state}`;
+
+    // Update drone trail on both maps
+    updateTrail(lat, lon);
+
+    // Track last known position for mission map auto-centering
+    if (window._telemetryUpdateHook) window._telemetryUpdateHook(lat, lon);
+    window._lastDroneLat = lat;
+    window._lastDroneLon = lon;
+
+    // Hide OFFLINE banner on valid data
+    setOnlineState(true);
 
     // Update Chart
     const elapsedMs = Date.now() - appStartTime;
@@ -237,16 +300,16 @@ window.electronAPI.onTelemetryData((data) => {
     telemetryChart.data.datasets[0].data.push(alt);
     // Dataset 1: Speed
     telemetryChart.data.datasets[1].data.push(speed);
-    // Dataset 2: Power (Simulated or from data if available - for now using some variation or placeholder)
-    telemetryChart.data.datasets[2].data.push(Math.random() * 50); // Simulated Power
-    // Dataset 3: Temperature
-    telemetryChart.data.datasets[3].data.push(temp);
+    // Dataset 2: Power (Throttle command from RC)
+    telemetryChart.data.datasets[2].data.push(cmd_throttle || 0); 
+    // Dataset 3: G-Force
+    telemetryChart.data.datasets[3].data.push(gforce);
 
     // Update Log for CSV Export
     telemetryLog.push({
         elapsed: formattedTime,
         ms: elapsedMs,
-        lat, lon, alt, state, temp, speed, pitch, roll, yaw, bearing
+        lat, lon, alt, state, gforce, speed, pitch, roll, yaw, bearing
     });
 
     if (telemetryChart.data.labels.length > 20) {
@@ -256,27 +319,7 @@ window.electronAPI.onTelemetryData((data) => {
     telemetryChart.update('none');
 });
 
-// Fake data simulation for testing UI (Remove or comment out when real data is coming)
-setInterval(() => {
-    const fakeData = [
-        -33.456 + (Math.random() * 0.01), // Lat
-        -70.648 + (Math.random() * 0.01), // Lon
-        100 + Math.floor(Math.random() * 10), // Alt
-        "OK", // Act
-        20 + Math.floor(Math.random() * 5), // Temp
-        20 + Math.floor(Math.random() * 5), // Vel
-        -10 + Math.floor(Math.random() * 2), // Pitch
-        20 + Math.floor(Math.random() * 2), // Roll
-        0 + Math.floor(Math.random() * 2), // Yaw
-        220 + Math.floor(Math.random() * 2) // Bearing
-    ];
-    window.dispatchEvent(new CustomEvent('fake-telemetry', { detail: fakeData }));
-}, 1000);
-
-window.addEventListener('fake-telemetry', (e) => {
-    // This is just to test without actual serial bridge if needed
-    // In a real app index.js (preload) would bridge this
-});
+// Removed duplicate fake data logic since it is in main.js simulator
 // Export Modal Logic
 const exportModal = document.getElementById('export-modal');
 const openExportBtn = document.getElementById('open-export');
@@ -346,3 +389,307 @@ confirmExportBtn.addEventListener('click', async () => {
         alert('Error exporting data: ' + result.error);
     }
 });
+
+// =============================================
+// TAB SWITCHING LOGIC
+// =============================================
+const tabButtons = document.querySelectorAll('.tab-btn');
+const views = {
+    'telemetry-view': document.getElementById('telemetry-view'),
+    'commands-view': document.getElementById('commands-view'),
+};
+
+let missionMapInitialized = false;
+let missionMap = null;
+let missionMapTargetMarker = null;
+
+tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-target');
+        if (!target) return;
+
+        tabButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        Object.entries(views).forEach(([id, el]) => {
+            if (el) el.style.display = id === target ? '' : 'none';
+        });
+
+        // Lazy-initialize the mission map only when opening the Commands view
+        if (target === 'commands-view' && !missionMapInitialized) {
+            initMissionMap();
+            missionMapInitialized = true;
+        }
+
+        // Inform Leaflet of resize when switching so tiles render correctly
+        if (target === 'commands-view' && missionMap) {
+            setTimeout(() => missionMap.invalidateSize(), 100);
+        }
+    });
+});
+
+// =============================================
+// MISSION MAP INITIALIZATION
+// =============================================
+function initMissionMap() {
+    missionMap = L.map('mission-map', {
+        zoomControl: true,
+        attributionControl: false,
+    }).setView(
+        (window._lastDroneLat && window._lastDroneLon)
+            ? [window._lastDroneLat, window._lastDroneLon]
+            : [-33.456, -70.648],
+        15
+    );
+
+    // Dark high-contrast tile layer (matches telemetry map)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+    }).addTo(missionMap);
+
+    // Drone trail on the mission map
+    missionTrail = L.polyline(trailPoints.slice(), {
+        color: '#00e5ff',
+        weight: 2,
+        opacity: 0.6,
+        dashArray: '4 4'
+    }).addTo(missionMap);
+
+    // Drone position marker on mission map
+    missionDroneMarker = L.marker(
+        window._lastDroneLat ? [window._lastDroneLat, window._lastDroneLon] : [-33.456, -70.648],
+        { icon: droneIcon }
+    ).addTo(missionMap);
+
+    // Click on the map to set target coordinates
+    missionMap.on('click', (e) => {
+        const { lat, lng } = e.latlng;
+        document.getElementById('cmd-lat').value = lat.toFixed(7);
+        document.getElementById('cmd-lon').value = lng.toFixed(7);
+        document.getElementById('cmd-map-lat').innerText = `Lat ${lat.toFixed(6)}`;
+        document.getElementById('cmd-map-lon').innerText = `Lon ${lng.toFixed(6)}`;
+
+        if (missionMapTargetMarker) {
+            missionMapTargetMarker.setLatLng([lat, lng]);
+        } else {
+            missionMapTargetMarker = L.marker([lat, lng], {
+                icon: buildWpIcon(selectedMode)
+            }).addTo(missionMap);
+        }
+    });
+}
+
+// Mission map trail and drone reference (populated when initMissionMap runs)
+let missionTrail = null;
+let missionDroneMarker = null;
+const missionWpMarkers = []; // One marker per waypoint on the mission map
+
+// Store last known drone coords so mission map can auto-center
+window._lastDroneLat = null;
+window._lastDroneLon = null;
+
+// =============================================
+// ORDER MODE SELECTION
+// =============================================
+let selectedMode = null; // null = none, 0=Manual, 1=Waypoint, 2=Orbit
+const modeNames = { 0: 'Control Manual', 1: 'Avanzar', 2: 'Orbitar' };
+let selectedDirection = 0; // 0=CCW, 1=CW
+
+// Show/hide orbit fields based on selected mode
+function updateOrbitFieldsVisibility(mode) {
+    const orbitFields = document.getElementById('orbit-fields');
+    if (orbitFields) {
+        orbitFields.style.display = (mode === 2) ? 'flex' : 'none';
+    }
+}
+
+document.querySelectorAll('.order-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.order-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedMode = parseInt(btn.getAttribute('data-mode'));
+        document.getElementById('current-order-display').innerText = modeNames[selectedMode] || 'Ninguna';
+        updateOrbitFieldsVisibility(selectedMode);
+    });
+});
+
+// Direction toggle (CW/CCW) for orbit mode
+document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedDirection = parseInt(btn.getAttribute('data-dir'));
+    });
+});
+
+// =============================================
+// WAYPOINT MANAGEMENT
+// =============================================
+const waypoints = []; // Array of { lat, lon, alt, mode }
+let activeWaypointIdx = 0;
+
+function renderWaypoints() {
+    const grid = document.getElementById('waypoints-grid');
+    const idxSpan = document.getElementById('wp-active-idx');
+    grid.innerHTML = '';
+
+    if (waypoints.length === 0) {
+        grid.innerHTML = `<div class="waypoint-item empty-state">No hay waypoints registrados. Use el mapa para añadirlos.</div>`;
+        idxSpan.innerText = '–';
+        return;
+    }
+
+    idxSpan.innerText = activeWaypointIdx + 1;
+
+    waypoints.forEach((wp, i) => {
+        const el = document.createElement('div');
+        el.className = 'waypoint-item' + (i === activeWaypointIdx ? ' active-wp' : '');
+        
+        let extraInfo = '';
+        if (wp.mode === 2) { // Orbit
+            const dirLabel = wp.direction === 1 ? 'CW' : 'CCW';
+            extraInfo = `<br>Rad: ${wp.radius}m | Dir: ${dirLabel}`;
+        }
+
+        el.innerHTML = `
+            <span class="wp-number">WP ${i + 1} – ${modeNames[wp.mode] || '?'}</span>
+            Lat: ${parseFloat(wp.lat).toFixed(5)}<br>
+            Lon: ${parseFloat(wp.lon).toFixed(5)}<br>
+            Alt: ${wp.alt} m${extraInfo}
+        `;
+        el.addEventListener('click', () => {
+            activeWaypointIdx = i;
+            renderWaypoints();
+        });
+        grid.appendChild(el);
+    });
+}
+
+// Send Command button
+document.getElementById('send-command-btn').addEventListener('click', async () => {
+    const lat = parseFloat(document.getElementById('cmd-lat').value);
+    const lon = parseFloat(document.getElementById('cmd-lon').value);
+    const alt = parseFloat(document.getElementById('cmd-alt').value) || 100;
+    const radius = parseFloat(document.getElementById('cmd-radius')?.value) || 50;
+
+    if (isNaN(lat) || isNaN(lon)) {
+        alert('Selecciona un punto de destino en el mapa primero.');
+        return;
+    }
+
+    if (selectedMode === null) {
+        alert('Selecciona un tipo de orden (Avanzar, Orbitar, Manual).');
+        return;
+    }
+
+    const wp = { lat, lon, alt, mode: selectedMode, direction: selectedDirection, radius };
+    waypoints.push(wp);
+    activeWaypointIdx = waypoints.length - 1;
+
+    // Place a marker on the mission map if available
+    if (missionMap) {
+        const marker = L.marker([lat, lon], { icon: buildWpIcon(selectedMode) })
+            .bindTooltip(`WP ${waypoints.length} – ${modeNames[selectedMode]}`, { permanent: false, direction: 'top' })
+            .addTo(missionMap);
+        missionWpMarkers.push(marker);
+    }
+
+    renderWaypoints();
+
+    // Determine masterMode and order from selected mode
+    // mode 0 = Manual -> masterMode=1, order=0
+    // mode 1 = Avanzar (Waypoint) -> masterMode=2, order=1
+    // mode 2 = Orbitar -> masterMode=2, order=2
+    const masterMode = selectedMode === 0 ? 1 : 2;
+    const order      = selectedMode === 0 ? 0 : selectedMode;
+
+    const cfg = {
+        masterMode,
+        order,
+        lat,
+        lon,
+        alt,
+        direction: selectedDirection,
+        radius
+    };
+
+    try {
+        const result = await window.electronAPI.sendCommand(cfg);
+        const btn = document.getElementById('send-command-btn');
+        if (result.success) {
+            btn.innerText = '✓ Enviado';
+            btn.style.background = '#28a745';
+            setTimeout(() => { btn.innerText = 'Enviar'; btn.style.background = ''; }, 2000);
+        } else {
+            btn.innerText = '✗ Error TX';
+            btn.style.background = '#dc3545';
+            setTimeout(() => { btn.innerText = 'Enviar'; btn.style.background = ''; }, 2500);
+            console.warn('TX error:', result.error);
+        }
+    } catch (e) {
+        console.error('sendCommand failed:', e);
+    }
+});
+
+// =============================================
+// WAYPOINT ICON BUILDER
+// Unique icon per mission mode
+// =============================================
+function buildWpIcon(mode) {
+    const configs = {
+        0: { color: '#f5a623', label: '✦', title: 'Manual' },   // orange diamond
+        1: { color: '#4589f5', label: '▶', title: 'Avanzar' },  // blue arrow
+        2: { color: '#c678dd', label: '↻', title: 'Orbitar' },  // purple cycle
+    };
+    const cfg = configs[mode] ?? { color: '#4589f5', label: '●', title: 'WP' };
+    return L.divIcon({
+        className: '',
+        html: `<div style="
+            min-width:24px; height:24px; border-radius:50%;
+            background: ${cfg.color};
+            border: 2px solid #fff;
+            box-shadow: 0 0 8px ${cfg.color};
+            display:flex; align-items:center; justify-content:center;
+            font-size:12px; color:#fff; font-weight:bold;
+            cursor:pointer;
+        " title="${cfg.title}">${cfg.label}</div>`,
+        iconAnchor: [12, 12]
+    });
+}
+
+// Initial waypoint grid render
+renderWaypoints();
+
+// =============================================
+// OFFLINE WATCHDOG
+// Show red OFFLINE banner if no telemetry for >3s
+// =============================================
+let _offlineTimer = null;
+let _isOnline = false;
+
+function setOnlineState(online) {
+    if (online === _isOnline) return;
+    _isOnline = online;
+    const banner = document.getElementById('offline-banner');
+    if (banner) banner.style.display = online ? 'none' : 'flex';
+    // Update drone state pill
+    const pill = document.getElementById('drone-state-indicator');
+    if (pill) pill.style.color = online ? '' : '#ff4d4d';
+}
+
+window.electronAPI.onTelemetryData(() => {
+    // Reset watchdog timer on every packet
+    clearTimeout(_offlineTimer);
+    _offlineTimer = setTimeout(() => setOnlineState(false), 3000);
+});
+
+// Start offline immediately (will clear once first packet arrives)
+setTimeout(() => setOnlineState(false), 3000);
+
+window._telemetryUpdateHook = function(lat, lon) {
+    window._lastDroneLat = lat;
+    window._lastDroneLon = lon;
+    clearTimeout(_offlineTimer);
+    _offlineTimer = setTimeout(() => setOnlineState(false), 3000);
+    setOnlineState(true);
+};

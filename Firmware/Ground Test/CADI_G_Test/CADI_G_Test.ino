@@ -5,346 +5,6 @@
 #include <nRF24L01.h>
 
 // ═══════════════════════════════════════════════════════
-// BINARY SERIAL PROTOCOL
-// ═══════════════════════════════════════════════════════
-
-// Protocol constants
-const uint8_t MAGIC_START = 0xAA;
-const uint8_t MAGIC_END = 0x55;
-
-// Packet types
-const uint8_t PKT_CONFIG = 0x01;    // PC -> ESP32 (configuration)
-const uint8_t PKT_TELEMETRY = 0x02; // ESP32 -> PC (telemetry)
-const uint8_t PKT_ACK = 0x03;       // Bidirectional (acknowledgment)
-const uint8_t PKT_NACK = 0x04;      // Bidirectional (negative ack)
-
-// Master mode values
-const uint8_t MASTER_DISCRETION = 0; // ESP32 decides (HID buttons)
-const uint8_t MASTER_MANUAL = 1;     // Force manual mode
-const uint8_t MASTER_AUTONOMOUS = 2; // Force autonomous mode
-
-// Order values (only when MASTER_AUTONOMOUS)
-const uint8_t ORDER_NONE = 0;
-const uint8_t ORDER_WAYPOINT = 1;
-const uint8_t ORDER_ORBIT = 2;
-
-// Direction values (only for orbit)
-const uint8_t DIR_CCW = 0; // Counter-clockwise
-const uint8_t DIR_CW = 1;  // Clockwise
-
-// Configuration packet structure (PC -> ESP32)
-struct __attribute__((packed)) ConfigPacket {
-  uint8_t masterMode; // 0=discretion, 1=manual, 2=autonomous
-  uint8_t order;      // 0=none, 1=waypoint, 2=orbit
-  float waypoint_lat; // Latitude (degrees)
-  float waypoint_lon; // Longitude (degrees)
-  float waypoint_alt; // Altitude (meters)
-  uint8_t direction;  // 0=CCW, 1=CW
-  float orbit_radius; // Radius (meters) [NEW]
-};
-
-// Telemetry packet structure (ESP32 -> PC)
-struct __attribute__((packed)) TelemetryPacket {
-  float latitude;
-  float longitude;
-  float altitude;
-  float yaw;
-  float pitch;
-  float gforce;
-  float velocity_mag;
-  float pos_local_x;
-  float pos_local_y;
-  float pos_local_z;
-  uint8_t currentMode; // 0=manual, 1=waypoint, 2=orbit
-  int16_t cmd_yaw;
-  int16_t cmd_throttle;
-  int16_t cmd_pitch;
-  int16_t cmd_roll;
-};
-
-// CRC16 calculation (CCITT)
-uint16_t calculateCRC16(const uint8_t *data, size_t length) {
-  uint16_t crc = 0xFFFF;
-
-  for (size_t i = 0; i < length; i++) {
-    crc ^= (uint16_t)data[i] << 8;
-    for (uint8_t j = 0; j < 8; j++) {
-      if (crc & 0x8000) {
-        crc = (crc << 1) ^ 0x1021;
-      } else {
-        crc = crc << 1;
-      }
-    }
-  }
-
-  return crc;
-}
-
-// Serial buffer for parsing
-const size_t SERIAL_BUFFER_SIZE = 256;
-uint8_t serialBuffer[SERIAL_BUFFER_SIZE];
-size_t serialBufferIndex = 0;
-
-// Last received configuration
-ConfigPacket lastConfig = {MASTER_DISCRETION, ORDER_NONE, 0, 0, 0, DIR_CCW};
-bool configReceived = false;
-
-// ═══════════════════════════════════════════════════════
-// SERIAL PROTOCOL FUNCTIONS
-// ═══════════════════════════════════════════════════════
-
-void sendACK() {
-  uint8_t packet[] = {MAGIC_START, PKT_ACK, 0x00, MAGIC_END};
-  Serial.write(packet, sizeof(packet));
-  Serial.flush();
-}
-
-void sendNACK() {
-  uint8_t packet[] = {MAGIC_START, PKT_NACK, 0x00, MAGIC_END};
-  Serial.write(packet, sizeof(packet));
-  Serial.flush();
-}
-
-bool sendTelemetryPacket(const TelemetryPacket &telem) {
-  const size_t payloadSize = sizeof(TelemetryPacket);
-  const size_t totalSize = 1 + 1 + 1 + payloadSize + 2 +
-                           1; // START + TYPE + LEN + PAYLOAD + CRC + END
-
-  uint8_t packet[totalSize];
-  size_t idx = 0;
-
-  // Header
-  packet[idx++] = MAGIC_START;
-  packet[idx++] = PKT_TELEMETRY;
-  packet[idx++] = (uint8_t)payloadSize;
-
-  // Payload
-  memcpy(&packet[idx], &telem, payloadSize);
-  idx += payloadSize;
-
-  // CRC16 (over TYPE + LENGTH + PAYLOAD)
-  uint16_t crc = calculateCRC16(&packet[1], 1 + 1 + payloadSize);
-  packet[idx++] = (crc >> 8) & 0xFF; // CRC high byte
-  packet[idx++] = crc & 0xFF;        // CRC low byte
-
-  // End marker
-  packet[idx++] = MAGIC_END;
-
-  // Send
-  Serial.write(packet, totalSize);
-  return true;
-}
-
-bool parseConfigPacket(const uint8_t *payload, size_t length) {
-  if (length != sizeof(ConfigPacket)) {
-    return false;
-  }
-
-  memcpy(&lastConfig, payload, sizeof(ConfigPacket));
-  configReceived = true;
-
-  switch (lastConfig.masterMode) {
-  case MASTER_DISCRETION:
-    break;
-  case MASTER_MANUAL:
-    break;
-  case MASTER_AUTONOMOUS:
-    break;
-  default:
-    break;
-  }
-
-  if (lastConfig.masterMode == MASTER_AUTONOMOUS) {
-    switch (lastConfig.order) {
-    case ORDER_WAYPOINT:
-      break;
-    case ORDER_ORBIT:
-      break;
-    default:
-      break;
-    }
-
-    if (lastConfig.order == ORDER_ORBIT) {
-    }
-  }
-
-  return true;
-}
-
-void processSerialPacket() {
-  if (serialBufferIndex < 4)
-    return; // Minimum packet size
-
-  // Find magic start
-  int startIdx = -1;
-  for (size_t i = 0; i < serialBufferIndex; i++) {
-    if (serialBuffer[i] == MAGIC_START) {
-      startIdx = i;
-      break;
-    }
-  }
-
-  if (startIdx == -1) {
-    serialBufferIndex = 0; // Garbage found, clear buffer
-    return;
-  } else if (startIdx > 0) {
-    // Shift buffer
-    memmove(serialBuffer, &serialBuffer[startIdx],
-            serialBufferIndex - startIdx);
-    serialBufferIndex -= startIdx;
-  }
-
-  // Check if we have complete packet
-  if (serialBufferIndex < 4)
-    return;
-
-  uint8_t packetType = serialBuffer[1];
-  uint8_t length = serialBuffer[2];
-  size_t expectedSize =
-      1 + 1 + 1 + length + 2 + 1; // START + TYPE + LEN + PAYLOAD + CRC + END
-
-  if (serialBufferIndex < expectedSize)
-    return; // Wait for more data
-
-  // Verify end marker
-  if (serialBuffer[expectedSize - 1] != MAGIC_END) {
-    sendNACK();
-    serialBufferIndex = 0;
-    return;
-  }
-
-  // Verify CRC
-  uint16_t receivedCRC =
-      ((uint16_t)serialBuffer[3 + length] << 8) | serialBuffer[3 + length + 1];
-  uint16_t calculatedCRC = calculateCRC16(&serialBuffer[1], 1 + 1 + length);
-
-  if (receivedCRC != calculatedCRC) {
-    sendNACK();
-    memmove(serialBuffer, &serialBuffer[expectedSize],
-            serialBufferIndex - expectedSize);
-    serialBufferIndex -= expectedSize;
-    return;
-  }
-
-  // Process packet based on type
-  bool success = false;
-  switch (packetType) {
-  case PKT_CONFIG:
-    success = parseConfigPacket(&serialBuffer[3], length);
-    break;
-
-  case PKT_ACK:
-    // ACK received (handled in sendTelemetryPacket)
-    success = true;
-    break;
-
-  case PKT_NACK:
-    success = true;
-    break;
-
-  default:
-    break;
-  }
-
-  // Send response
-  if (packetType == PKT_CONFIG) {
-    if (success) {
-      sendACK();
-    } else {
-      sendNACK();
-    }
-  }
-
-  // Remove processed packet from buffer
-  if (serialBufferIndex >= expectedSize) {
-    memmove(serialBuffer, &serialBuffer[expectedSize],
-            serialBufferIndex - expectedSize);
-    serialBufferIndex -= expectedSize;
-  } else {
-    serialBufferIndex = 0;
-  }
-}
-
-void updateSerialParser() {
-  // Read available serial data
-  while (Serial.available() && serialBufferIndex < SERIAL_BUFFER_SIZE) {
-    serialBuffer[serialBufferIndex++] = Serial.read();
-  }
-
-  // Process complete packets
-  if (serialBufferIndex > 0) {
-    processSerialPacket();
-  }
-
-  // Clear buffer if it's full (corrupted data)
-  if (serialBufferIndex >= SERIAL_BUFFER_SIZE) {
-    serialBufferIndex = 0;
-  }
-}
-
-void applySerialConfiguration() {
-  if (!configReceived)
-    return;
-
-  static uint8_t lastMasterMode = MASTER_DISCRETION;
-  static uint8_t lastOrder = ORDER_NONE;
-
-  // Check if configuration changed
-  bool modeChanged = (lastConfig.masterMode != lastMasterMode);
-  bool orderChanged = (lastConfig.order != lastOrder);
-
-  if (!modeChanged && !orderChanged)
-    return;
-
-  // Apply master mode
-  switch (lastConfig.masterMode) {
-  case MASTER_DISCRETION:
-    // Do nothing - HID buttons control mode
-    break;
-
-  case MASTER_MANUAL:
-    if (modeChanged) {
-      currentMode = MODE_MANUAL;
-      resetOrbitSystem();
-    }
-    break;
-
-  case MASTER_AUTONOMOUS:
-    if (modeChanged || orderChanged) {
-      // Convert GPS coordinates to local waypoint
-      if (originEstablished) {
-        Vector3D localWaypoint =
-            GPSToLocal(lastConfig.waypoint_lat, lastConfig.waypoint_lon,
-                       lastConfig.waypoint_alt);
-
-        switch (lastConfig.order) {
-        case ORDER_WAYPOINT:
-          targetWaypoint = localWaypoint;
-          currentMode = MODE_WAYPOINT;
-          break;
-
-        case ORDER_ORBIT:
-          orbitCenter = localWaypoint;
-          orbitAltitude = lastConfig.waypoint_alt;
-          orbitClockwise = (lastConfig.direction == DIR_CW);
-          resetOrbitSystem();
-          currentMode = MODE_ORBIT;
-          break;
-
-        default:
-          break;
-        }
-      } else {
-      }
-    }
-    break;
-  }
-
-  lastMasterMode = lastConfig.masterMode;
-  lastOrder = lastConfig.order;
-}
-
-// ═══════════════════════════════════════════════════════
 // VECTORS CLASS
 // ═══════════════════════════════════════════════════════
 
@@ -560,6 +220,15 @@ void setOrigin(float lat, float lon, float alt) {
     gpsOrigin.y = lon;
     gpsOrigin.z = alt;
     originEstablished = true;
+
+    Serial.println("\n[SYSTEM] REFERENCE ORIGIN ESTABLISHED");
+    Serial.print(" > Origin Lat: ");
+    Serial.println(lat, 6);
+    Serial.print(" > Origin Lon: ");
+    Serial.println(lon, 6);
+    Serial.print(" > Origin Alt: ");
+    Serial.print(alt, 1);
+    Serial.println(" m\n");
   }
 }
 
@@ -876,9 +545,15 @@ void resetOrbitSystem() {
 // HID CALLBACKS
 // ═══════════════════════════════════════════════════════
 
-void onConnectedController(ControllerPtr ctl) { myControllers[0] = ctl; }
+void onConnectedController(ControllerPtr ctl) {
+  Serial.println("[HID] CONTROLLER ONLINE");
+  myControllers[0] = ctl;
+}
 
-void onDisconnectedController(ControllerPtr ctl) { myControllers[0] = nullptr; }
+void onDisconnectedController(ControllerPtr ctl) {
+  Serial.println("[HID] CONTROLLER OFFLINE");
+  myControllers[0] = nullptr;
+}
 
 // ═══════════════════════════════════════════════════════
 // SETUP
@@ -893,7 +568,15 @@ void setup() {
     Serial.read();
   }
 
+  Serial.println("\n\n╔═══════════════════════════════════════╗");
+  Serial.println("║    GROUND STATION - ESP32 v4.0       ║");
+  Serial.println("║    FIELD TEST ENVIRONMENT (DEBUG)    ║");
+  Serial.println("║    GPS+IMU Kalman Fusion System      ║");
+  Serial.println("║    Waypoint + Orbit Navigation       ║");
+  Serial.println("╚═══════════════════════════════════════╝\n");
+
   if (!radio.begin()) {
+    Serial.println("[ERROR] nRF24L01 NOT DETECTED");
     while (1)
       ;
   }
@@ -905,8 +588,16 @@ void setup() {
   radio.setPALevel(RF24_PA_LOW);
   radio.stopListening();
 
+  Serial.println("[OK] Radio Link: ONLINE");
+
   BP32.setup(&onConnectedController, &onDisconnectedController);
   BP32.forgetBluetoothKeys();
+
+  Serial.println("[OK] Bluetooth HID: ONLINE");
+  Serial.println("[INFO] Controls:");
+  Serial.println(" > Button A: WAYPOINT MODE");
+  Serial.println(" > Button B: MANUAL MODE");
+  Serial.println(" > Button X: ORBIT MODE\n");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -914,31 +605,26 @@ void setup() {
 // ═══════════════════════════════════════════════════════
 
 void loop() {
-  // Update serial parser (non-blocking)
-  updateSerialParser();
-
-  // Apply serial configuration if received
-  applySerialConfiguration();
-
   bool dataUpdated = BP32.update();
 
-  // MODE SWITCHING (only if in DISCRETION mode)
+  // MODE SWITCHING
   if (dataUpdated && myControllers[0] && myControllers[0]->isConnected()) {
-    if (lastConfig.masterMode == MASTER_DISCRETION) {
-      if (myControllers[0]->a()) {
-        currentMode = MODE_WAYPOINT;
-        delay(300);
-      }
-      if (myControllers[0]->b()) {
-        currentMode = MODE_MANUAL;
-        resetOrbitSystem();
-        delay(300);
-      }
-      if (myControllers[0]->x()) {
-        currentMode = MODE_ORBIT;
-        resetOrbitSystem();
-        delay(300);
-      }
+    if (myControllers[0]->a()) {
+      currentMode = MODE_WAYPOINT;
+      Serial.println("\n[MODE] WAYPOINT NAVIGATION ACTIVATED");
+      delay(300);
+    }
+    if (myControllers[0]->b()) {
+      currentMode = MODE_MANUAL;
+      resetOrbitSystem();
+      Serial.println("\n[MODE] MANUAL CONTROL ACTIVATED");
+      delay(300);
+    }
+    if (myControllers[0]->x()) {
+      currentMode = MODE_ORBIT;
+      resetOrbitSystem();
+      Serial.println("\n[MODE] ORBIT NAVIGATION ACTIVATED");
+      delay(300);
     }
   }
 
@@ -999,34 +685,37 @@ void loop() {
         aircraft.pitch = pitch;
         aircraft.yaw = yaw;
 
-        // SEND TELEMETRY VIA SERIAL (every 10 cycles = ~500ms)
-        static uint8_t telemCounter = 0;
-        if (++telemCounter >= 10) {
-          telemCounter = 0;
-
-          TelemetryPacket telemPkt;
-          telemPkt.latitude = latitude;
-          telemPkt.longitude = longitude;
-          telemPkt.altitude = altitude;
-          telemPkt.yaw = yaw;
-          telemPkt.pitch = pitch;
-          telemPkt.gforce = gforce;
-          telemPkt.velocity_mag = aircraft.velocity.magnitude();
-          telemPkt.pos_local_x = aircraft.position.x;
-          telemPkt.pos_local_y = aircraft.position.y;
-          telemPkt.pos_local_z = aircraft.position.z;
-          telemPkt.currentMode = (uint8_t)currentMode;
-          telemPkt.cmd_yaw = commands[0];
-          telemPkt.cmd_throttle = commands[1];
-          telemPkt.cmd_pitch = commands[2];
-          telemPkt.cmd_roll = commands[3];
-
-          sendTelemetryPacket(telemPkt);
-        }
-
         // DISPLAY (only in manual mode)
         if (currentMode == MODE_MANUAL) {
+          Serial.println("\n╔═══════════════════════════════════════╗");
+          Serial.println("║         TELEMETRY DISPLAY             ║");
+          Serial.println("╠═══════════════════════════════════════╣");
+          Serial.print("║ GPS:   ");
+          Serial.print(latitude, 6);
+          Serial.print(", ");
+          Serial.println(longitude, 6);
+          Serial.print("║ Local: (");
+          Serial.print(aircraft.position.x, 1);
+          Serial.print(", ");
+          Serial.print(aircraft.position.y, 1);
+          Serial.print(", ");
+          Serial.print(aircraft.position.z, 1);
+          Serial.println(") m");
+          Serial.print("║ Velocity: ");
           float spd = aircraft.velocity.magnitude();
+          Serial.print(spd, 1);
+          Serial.print(" m/s (");
+          Serial.print(spd * 3.6, 1);
+          Serial.println(" km/h)");
+          Serial.print("║ Attitude: P=");
+          Serial.print(pitch, 0);
+          Serial.print("° Y=");
+          Serial.print(yaw, 0);
+          Serial.println("°");
+          Serial.print("║ G-Force:  ");
+          Serial.print(gforce, 2);
+          Serial.println(" g");
+          Serial.println("╚═══════════════════════════════════════╝");
         }
       }
     }

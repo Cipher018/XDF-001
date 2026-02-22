@@ -5,5 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listPorts: () => ipcRenderer.invoke('list-ports'),
   connectSerial: (portPath) => ipcRenderer.invoke('connect-serial', portPath),
   selectSavePath: () => ipcRenderer.invoke('select-save-path'),
-  saveCSVFile: (path, content) => ipcRenderer.invoke('save-csv-file', path, content)
+  saveCSVFile: (path, content) => ipcRenderer.invoke('save-csv-file', path, content),
+  sendCommand: (cfg) => ipcRenderer.invoke('send-command', cfg),
 });

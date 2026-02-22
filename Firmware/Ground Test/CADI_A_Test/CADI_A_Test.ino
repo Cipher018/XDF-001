@@ -70,15 +70,18 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("Initialising System...");
 
   // Initialize GPS Serial
   GPS_SERIAL.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+  Serial.println("GPS: Initialized");
 
   // Initialize MPU-9250 via I2C (Bus 0)
   Wire.begin(21, 22);    // SDA: 21, SCL: 22
   Wire.setClock(400000); // 400kHz I2C high speed
 
   if (mpu.begin() < 0) {
+    Serial.println("FATAL ERROR: MPU-9250 not detected. System Halted.");
     while (1)
       ;
   }
@@ -89,12 +92,18 @@ void setup() {
   mpu.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_20HZ);
   mpu.setSrd(19); // Internal sample rate divider to reach ~50Hz
 
+  Serial.println("MPU-9250: Online");
+
   // Calibrate Gyroscope (keep sensor stationary during this phase)
+  Serial.println(
+      "CALIBRATING GYRO (3 seconds)... Please do not move the aircraft.");
   delay(1000);
   mpu.calibrateGyro();
+  Serial.println("Gyroscope Calibration Complete.");
 
   // Initialize Radio nRF24L01
   if (!radio.begin()) {
+    Serial.println("FATAL ERROR: nRF24L01 Radio not detected. System Halted.");
     while (1)
       ;
   }
@@ -106,10 +115,34 @@ void setup() {
   radio.setPALevel(RF24_PA_LOW); // PA_LOW for testing; use PA_MAX for flight
   radio.startListening();
 
+  Serial.println("RF Radio: Online");
+
+  // Initialize PCA9685 Servo Driver via I2C (Bus 1)
+  Wire1.begin(32, 27); // SDA: 32, SCL: 27
+  pwm = Adafruit_PWMServoDriver(0x40, Wire1);
+  pwm.begin();
+  pwm.setPWMFreq(SERVO_FREQUENCY);
+  delay(10);
+
+  // Initialize dedicated ESC Throttle pin
+  ESP32PWM::allocateTimer(0);
+  esc.setPeriodHertz(50);
+  esc.attach(ESC_PIN, 1000, 2000); // Standard ESC pulse width
+  esc.write(0);                    // Arming step (neutral)
+
+  // Set all servos to neutral position (90 degrees)
+  for (int i = 0; i < 7; i++) {
+    setServoAngle(i, 90);
+  }
+
+  Serial.println("Servo Driver PCA9685: Ready");
+
   // Prepare first telemetry packet for transmission
   updateTelemetry();
   radio.writeAckPayload(1, &telemetryData, sizeof(telemetryData));
   lastRFTime = millis();
+
+  Serial.println("\n--- AIRCRAFT CADI_A: READY FOR MISSION ---\n");
 }
 
 void loop() {
@@ -157,6 +190,8 @@ void loop() {
     // Prepare fresh telemetry for the next acknowledgment
     updateTelemetry();
     radio.writeAckPayload(1, &telemetryData, sizeof(telemetryData));
+
+    Serial.println("Command received. Telemetry updated.");
   }
 
   // Failsafe check: Trigger if signal lost for > 1000ms
@@ -169,6 +204,12 @@ void loop() {
     setServoAngle(SERVO_CH_FLAP_R, 90);
     setServoAngle(SERVO_CH_PITCH_L, 95); // Slight pitch up for glide
     setServoAngle(SERVO_CH_PITCH_R, 95);
+
+    static unsigned long lastFailsafePrint = 0;
+    if (millis() - lastFailsafePrint > 1000) {
+      Serial.println("!!! FAILSAFE TRIGGERED !!! SIGNAL LOST");
+      lastFailsafePrint = millis();
+    }
   }
 }
 
@@ -236,6 +277,30 @@ void updateTelemetry() {
   telemetryData[3] = altitude;
   telemetryData[4] = pitch;
   telemetryData[5] = totalGForce;
+
+  // Local debug log (Frequency capped to 1Hz)
+  static unsigned long lastPrintTime = 0;
+  if (millis() - lastPrintTime > 1000) {
+    Serial.println("\n=== SYSTEM TELEMETRY ===");
+    Serial.print("Location: ");
+    Serial.print(latitude, 6);
+    Serial.print(", ");
+    Serial.println(longitude, 6);
+    Serial.print("Heading:  ");
+    Serial.print(heading, 1);
+    Serial.println(" deg");
+    Serial.print("Altitude: ");
+    Serial.print(altitude, 1);
+    Serial.println(" m");
+    Serial.print("Pitch:    ");
+    Serial.print(pitch, 1);
+    Serial.println(" deg");
+    Serial.print("G-Force:  ");
+    Serial.print(totalGForce, 2);
+    Serial.println(" g");
+    Serial.println("========================\n");
+    lastPrintTime = millis();
+  }
 }
 
 // Helper to set servo angle via PCA9685 driver
