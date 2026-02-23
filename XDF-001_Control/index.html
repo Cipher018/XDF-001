@@ -36,21 +36,30 @@
       </div>
       <nav class="tabs">
         <button class="tab-btn active" data-target="telemetry-view">
-          Telemetría
+          Telemetry
         </button>
-        <button class="tab-btn" data-target="commands-view">Órdenes</button>
+        <button class="tab-btn" data-target="commands-view">Mission</button>
         <div class="spacer"></div>
         <div class="device-selectors">
+          <button class="icon-btn" id="open-config" title="Settings">
+            <span class="icon">settings</span>
+          </button>
           <button id="refresh-ports" class="icon-btn" title="Refresh Ports">
             <span class="icon">refresh</span>
           </button>
+          <select id="baud-rate-select" class="device-select" style="width: 100px;">
+            <option value="9600">9600</option>
+            <option value="57600">57600</option>
+            <option value="115200" selected>115200</option>
+          </select>
           <select id="telemetry-port-select" class="device-select">
             <option value="">Select Telemetry Port</option>
           </select>
         </div>
         <div class="drone-status" id="drone-state-indicator">
-          Estado de dron
+          Drone Status
         </div>
+
       </nav>
     </header>
 
@@ -88,8 +97,9 @@
             OFFLINE
           </div>
           <div style="color: #8892b0; margin-top: 1rem; font-size: 0.9rem">
-            Sin señal de telemetría del dron
+            No telemetry signal received from drone
           </div>
+
         </div>
         <section class="telemetry-grid">
           <div class="card metric-card" id="altitude">
@@ -114,6 +124,7 @@
             </div>
             <div class="metric-value">0 <span class="unit">g</span></div>
           </div>
+
           <div class="card metric-card" id="humidity">
             <div class="card-header">
               <span class="icon">cloud</span> Humidity
@@ -143,6 +154,14 @@
               <span id="lon">W 0° 0' 0"</span>
             </div>
             <div id="map"></div>
+            <div class="map-control-overlay">
+              <button id="follow-telemetry" class="map-overlay-btn" title="Follow Drone">
+                <span class="icon">navigation</span>
+              </button>
+              <button id="center-telemetry" class="map-overlay-btn" title="Center View">
+                <span class="icon">my_location</span>
+              </button>
+            </div>
           </div>
         </section>
 
@@ -220,23 +239,23 @@
           <!-- Left: Orders -->
           <div class="card orders-card">
             <div class="card-header">
-              <span class="icon">memory</span> Órdenes
+              <span class="icon">memory</span> Mission Control
             </div>
             <div class="current-order">
-              Orden Actual: <span id="current-order-display">Ninguna</span>
+              Active Order: <span id="current-order-display">None</span>
             </div>
 
             <div class="new-order-section">
-              <h3>Ingrese una nueva orden</h3>
+              <h3>Issue New Order</h3>
               <div class="order-buttons">
-                <button class="order-btn" data-mode="1">Avanzar</button>
-                <button class="order-btn" data-mode="2">Orbitar</button>
-                <button class="order-btn" data-mode="0">Control Manual</button>
+                <button class="order-btn" data-mode="1">Advance</button>
+                <button class="order-btn" data-mode="2">Orbit</button>
+                <button class="order-btn" data-mode="0">Manual Control</button>
               </div>
 
               <div class="order-inputs">
                 <div class="input-group">
-                  <label>Altitud objetivo:</label>
+                  <label>Target Altitude:</label>
                   <div class="input-wrapper">
                     <input
                       type="text"
@@ -244,37 +263,37 @@
                       pattern="[0-9]*"
                       id="cmd-alt"
                       value="200"
-                      placeholder="ej: 120"
+                      placeholder="e.g.: 120"
                     />
-                    <span class="input-suffix">metros</span>
+                    <span class="input-suffix">meters</span>
                   </div>
                 </div>
                 <div class="input-group">
-                  <label>Lat objetivo:</label>
+                  <label>Target Lat:</label>
                   <input
                     type="text"
                     id="cmd-lat"
-                    placeholder="Ej: -33.456789"
+                    placeholder="E.g.: -33.456789"
                     readonly
                   />
                 </div>
                 <div class="input-group">
-                  <label>Lon objetivo:</label>
+                  <label>Target Lon:</label>
                   <input
                     type="text"
                     id="cmd-lon"
-                    placeholder="Ej: -70.648211"
+                    placeholder="E.g.: -70.648211"
                     readonly
                   />
                 </div>
 
-                <!-- Orbit-only fields (shown when Orbitar is selected) -->
+                <!-- Orbit-only fields (shown when Orbit is selected) -->
                 <div
                   id="orbit-fields"
                   style="display: none; flex-direction: column; gap: 0.5rem"
                 >
                   <div class="input-group">
-                    <label>Radio de órbita:</label>
+                    <label>Orbit Radius:</label>
                     <div class="input-wrapper">
                       <input
                         type="text"
@@ -282,13 +301,13 @@
                         pattern="[0-9]*"
                         id="cmd-radius"
                         value="50"
-                        placeholder="ej: 50"
+                        placeholder="e.g.: 50"
                       />
-                      <span class="input-suffix">metros</span>
+                      <span class="input-suffix">meters</span>
                     </div>
                   </div>
                   <div class="input-group">
-                    <label>Sentido:</label>
+                    <label>Direction:</label>
                     <div class="direction-toggle">
                       <button class="dir-btn selected" data-dir="0">
                         ↺ CCW
@@ -301,22 +320,32 @@
 
               <div class="btn-center">
                 <button id="send-command-btn" class="primary-btn">
-                  Enviar
+                  Send
                 </button>
               </div>
             </div>
+
           </div>
 
           <!-- Right: Position & Map -->
           <div class="card position-card">
             <div class="card-header">
-              <span class="icon">navigation</span> Posición
+              <span class="icon">navigation</span> Position
             </div>
+
             <div class="coords">
               <span id="cmd-map-lat">Lat S 0° 0' 0"</span>
               <span id="cmd-map-lon">Lon W 0° 0' 0"</span>
             </div>
             <div id="mission-map" class="mission-map-container"></div>
+            <div class="map-control-overlay">
+              <button id="follow-mission" class="map-overlay-btn" title="Follow Drone">
+                <span class="icon">navigation</span>
+              </button>
+              <button id="center-mission" class="map-overlay-btn" title="Center View">
+                <span class="icon">my_location</span>
+              </button>
+            </div>
           </div>
         </section>
 
@@ -324,22 +353,100 @@
         <section class="mission-plan-row">
           <div class="card mission-plan-card">
             <div class="card-header">
-              <span class="icon">route</span> Plan de misión
+              <span class="icon">route</span> Mission Plan
             </div>
             <div class="current-waypoint">
-              Waypoint actual: <span id="wp-active-idx">1</span>
+              Active Waypoint: <span id="wp-active-idx">1</span>
             </div>
             <div class="waypoints-list" id="waypoints-grid">
               <!-- Dynamically populated via JS -->
               <div class="waypoint-item empty-state">
-                No hay waypoints registrados. Use el mapa para añadirlos.
+                No waypoints registered. Use the map to add them.
               </div>
             </div>
           </div>
+          
         </section>
+      </main>
+
       </main>
     </div>
     <!-- End VIEWS CONTAINER -->
+
+    <!-- Configuration Modal -->
+    <div id="config-modal" class="modal-overlay">
+      <div class="modal-content" style="width: 600px;">
+        <div class="modal-header">
+          <span class="icon">settings</span>
+          <h2>Configuration & Customization</h2>
+        </div>
+        <div class="modal-body">
+          <div class="tabs" style="margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color);">
+            <button class="tab-btn active" data-config-target="poi-config">Points of Interest</button>
+            <button class="tab-btn" data-config-target="appearance-config">Appearance</button>
+          </div>
+
+          <!-- POI Section -->
+          <div id="poi-config" class="config-section">
+            <label>Add New Point of Interest:</label>
+            <div class="poi-inputs" style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="poi-lat" placeholder="Lat" style="flex:1;">
+                <input type="text" id="poi-lon" placeholder="Lon" style="flex:1;">
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <select id="poi-icon-select" class="device-select" style="flex: 1;">
+                  <option value="default">Default (📌)</option>
+                  <option value="warning">Warning (⚠️)</option>
+                  <option value="target">Target (🎯)</option>
+                  <option value="home">Home (🏠)</option>
+                  <option value="custom">Custom Image/Icon...</option>
+                </select>
+                <input type="text" id="poi-custom-icon" placeholder="Path to .ico, .png, etc." style="flex: 2; display: none;">
+                <button id="add-poi-btn" class="primary-btn" style="padding: 4px 15px;">ADD</button>
+              </div>
+            </div>
+            <label>Registered POIs:</label>
+            <div id="poi-grid" class="waypoints-list" style="height: 150px; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 0.5rem;">
+              <div class="waypoint-item empty-state">No POIs added.</div>
+            </div>
+          </div>
+
+          <!-- Appearance Section -->
+          <div id="appearance-config" class="config-section" style="display: none;">
+            <div class="config-section">
+              <label>Drone Marker Style:</label>
+              <div style="display: flex; flex-direction: column; gap: 0.8rem;">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                  <input type="radio" name="drone-style" value="glow" checked id="style-glow">
+                  <label for="style-glow" style="margin: 0;">Glow Circle</label>
+                  <input type="color" id="drone-color-picker" value="#00e5ff" style="width: 40px; height: 25px; border: none; background: transparent; cursor: pointer; margin-left: 10px;">
+                </div>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                  <input type="radio" name="drone-style" value="image" id="style-image">
+                  <label for="style-image" style="margin: 0;">Custom Icon (.ico / Image)</label>
+                  <input type="text" id="drone-icon-path" placeholder="assets/icon.png" style="flex: 1; font-size: 0.75rem;">
+                </div>
+              </div>
+            </div>
+            
+            <div class="config-section">
+              <label>Application Logo:</label>
+              <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <div class="path-selector">
+                  <input type="text" id="logo-url-input" placeholder="Enter Logo Image URL (e.g., assets/icon.png)">
+                  <button id="apply-logo-btn" class="small-btn">Apply</button>
+                </div>
+                <span style="font-size: 0.7rem; color: var(--text-secondary);">Currently active logo appears in the top-left header.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="close-config" class="secondary-btn">Close</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Export Modal -->
     <div id="export-modal" class="modal-overlay">

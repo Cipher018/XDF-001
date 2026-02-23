@@ -9,6 +9,7 @@
   --critical-color: #ff4d4d;
   --font-main: "Inter", sans-serif;
   --font-heading: "Orbitron", sans-serif;
+  --drone-glow: #00e5ff;
 }
 
 * {
@@ -264,6 +265,45 @@ header {
   color: var(--text-secondary);
 }
 
+.position-card {
+  position: relative;
+}
+
+.map-control-overlay {
+  position: absolute;
+  top: 50px;
+  right: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  z-index: 1000;
+}
+
+.map-overlay-btn {
+  width: 32px;
+  height: 32px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content:center;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+}
+
+.map-overlay-btn:hover {
+  background: var(--accent-color);
+  border-color: #fff;
+}
+
+.map-overlay-btn.active {
+  background: var(--accent-color);
+  box-shadow: 0 0 10px var(--accent-color);
+}
+
 #map {
   flex: 1;
   width: 100%;
@@ -459,6 +499,43 @@ header {
 
 .checkbox-grid input[type="checkbox"] {
   accent-color: var(--accent-color);
+}
+
+/* Modal Tab Styles */
+.modal-body .tabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.modal-body .tab-btn {
+  padding: 6px 16px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+}
+
+.modal-body .tab-btn.active {
+  border-bottom: 2px solid var(--accent-color);
+  background: rgba(69, 137, 245, 0.1);
+  color: var(--text-primary);
+}
+
+#drone-color-picker {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+#drone-color-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+#drone-color-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
 }
 
 .range-inputs {
@@ -798,6 +875,21 @@ header {
   margin-bottom: 2px;
 }
 
+/* POI Card Styles */
+.poi-inputs input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.poi-inputs input:focus {
+  border-color: var(--accent-color);
+}
+
 /* =========================================
    DIRECTION TOGGLE (CW / CCW)
    ========================================= */
@@ -833,8 +925,10 @@ header {
 /* Remove spinners from all text inputs with numeric inputmode */
 input[inputmode="numeric"] {
   -moz-appearance: textfield;
+  appearance: textfield;
 }
 input[inputmode="numeric"]::-webkit-outer-spin-button,
 input[inputmode="numeric"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
+  appearance: none;
 }

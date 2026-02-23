@@ -28,8 +28,8 @@ const droneIcon = L.divIcon({
     html: `<div style="
         width:18px;height:18px;
         border-radius:50%;
-        background:radial-gradient(circle, #00e5ff 0%, #4589f5 60%, rgba(69,137,245,0) 100%);
-        box-shadow:0 0 12px #00e5ff, 0 0 24px rgba(0,229,255,0.5);
+        background:radial-gradient(circle, var(--drone-glow) 0%, #4589f5 60%, rgba(69,137,245,0) 100%);
+        box-shadow:0 0 12px var(--drone-glow), 0 0 24px rgba(0,229,255,0.5);
         border:2px solid #fff;
     "></div>`,
     iconAnchor: [9, 9]
@@ -227,16 +227,48 @@ refreshPortsBtn.addEventListener('click', () => {
 
 portSelect.addEventListener('change', async (e) => {
     if (e.target.value) {
-        const result = await window.electronAPI.connectSerial(e.target.value);
+        const baudRate = document.getElementById('baud-rate-select').value;
+        const result = await window.electronAPI.connectSerial(e.target.value, baudRate);
         if (result.success) {
-            console.log('Connected to serial port:', e.target.value);
+            console.log('Connected to serial port:', e.target.value, '@', baudRate);
         } else {
             alert('Failed to connect: ' + result.error);
         }
     }
 });
 
+
 listPorts();
+
+// Map State
+let isFollowTelemetry = false;
+let isFollowMission = false;
+
+function setupMapControls(mapId, followId, centerId) {
+    const followBtn = document.getElementById(followId);
+    const centerBtn = document.getElementById(centerId);
+    
+    followBtn.addEventListener('click', () => {
+        if (followId === 'follow-telemetry') isFollowTelemetry = !isFollowTelemetry;
+        else isFollowMission = !isFollowMission;
+        
+        followBtn.classList.toggle('active', (followId === 'follow-telemetry' ? isFollowTelemetry : isFollowMission));
+        
+        if (followId === 'follow-telemetry' ? isFollowTelemetry : isFollowMission) {
+            if (window._lastDroneLat && window._lastDroneLon) {
+                if (mapId === 'map') map.panTo([window._lastDroneLat, window._lastDroneLon]);
+                else missionMap.panTo([window._lastDroneLat, window._lastDroneLon]);
+            }
+        }
+    });
+
+    centerBtn.addEventListener('click', () => {
+        if (window._lastDroneLat && window._lastDroneLon) {
+            if (mapId === 'map') map.panTo([window._lastDroneLat, window._lastDroneLon]);
+            else missionMap.panTo([window._lastDroneLat, window._lastDroneLon]);
+        }
+    });
+}
 
 // Telemetry Handling
 window.electronAPI.onTelemetryData((data) => {
@@ -275,7 +307,7 @@ window.electronAPI.onTelemetryData((data) => {
     // Update Map
     const coords = [lat, lon];
     droneMarker.setLatLng(coords);
-    map.panTo(coords);
+    if (isFollowTelemetry) map.panTo(coords);
     document.getElementById('lat').innerText = `Lat: ${lat.toFixed(6)}`;
     document.getElementById('lon').innerText = `Lon: ${lon.toFixed(6)}`;
     document.querySelector('.drone-status').innerText = `State: ${state}`;
@@ -330,7 +362,6 @@ const exportPathInput = document.getElementById('export-path');
 
 openExportBtn.addEventListener('click', () => {
     exportModal.classList.add('active');
-    // Set default end time to current elapsed
     const lastPoint = telemetryLog[telemetryLog.length - 1];
     if (lastPoint) {
         document.getElementById('export-end').value = lastPoint.elapsed;
@@ -354,23 +385,17 @@ confirmExportBtn.addEventListener('click', async () => {
         alert('Please select a save path first.');
         return;
     }
-
     const selectedStartTime = document.getElementById('export-start').value;
     const selectedEndTime = document.getElementById('export-end').value;
     const selectedVars = Array.from(document.querySelectorAll('input[name="export-var"]:checked'))
                               .map(cb => cb.value);
-
-    // Convert MM:SS to ms for easier comparison if needed, or just use string comparison for simplicity if they match format
     const filteredData = telemetryLog.filter(point => {
         return point.elapsed >= selectedStartTime && (selectedEndTime === "Now" || point.elapsed <= selectedEndTime);
     });
-
     if (filteredData.length === 0) {
         alert('No data found for the selected time range.');
         return;
     }
-
-    // Generate CSV
     const headers = selectedVars.join(',');
     const rows = filteredData.map(point => {
         return selectedVars.map(v => {
@@ -378,9 +403,7 @@ confirmExportBtn.addEventListener('click', async () => {
             return point[v];
         }).join(',');
     });
-
     const csvContent = headers + '\n' + rows.join('\n');
-
     const result = await window.electronAPI.saveCSVFile(path, csvContent);
     if (result.success) {
         alert('Data exported successfully!');
@@ -391,9 +414,48 @@ confirmExportBtn.addEventListener('click', async () => {
 });
 
 // =============================================
-// TAB SWITCHING LOGIC
+// CONFIG MODAL LOGIC
 // =============================================
-const tabButtons = document.querySelectorAll('.tab-btn');
+const configModal = document.getElementById('config-modal');
+const openConfigBtn = document.getElementById('open-config');
+const closeConfigBtn = document.getElementById('close-config');
+const configTabs = configModal.querySelectorAll('.modal-body .tab-btn');
+const configSections = {
+    'poi-config': document.getElementById('poi-config'),
+    'appearance-config': document.getElementById('appearance-config'),
+};
+
+openConfigBtn.addEventListener('click', () => {
+    configModal.classList.add('active');
+});
+
+closeConfigBtn.addEventListener('click', () => {
+    configModal.classList.remove('active');
+});
+
+configTabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-config-target');
+        configTabs.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        Object.entries(configSections).forEach(([id, el]) => {
+            if (el) el.style.display = id === target ? '' : 'none';
+        });
+    });
+});
+
+// Customization Handlers
+const applyLogoBtn = document.getElementById('apply-logo-btn');
+applyLogoBtn.addEventListener('click', () => {
+    const url = document.getElementById('logo-url-input').value.trim();
+    if (url) {
+        const h1 = document.querySelector('.title-section h1');
+        if (h1) h1.innerHTML = `<img src="${url}" alt="Logo" style="height: 30px; vertical-align: middle; margin-right: 10px;"> C.A.D.I`;
+    }
+});
+
+// Tab Switching Logic (Main Tabs)
+const tabButtons = document.querySelectorAll('.tab-btn:not(.modal-body .tab-btn)');
 const views = {
     'telemetry-view': document.getElementById('telemetry-view'),
     'commands-view': document.getElementById('commands-view'),
@@ -421,9 +483,11 @@ tabButtons.forEach(btn => {
             missionMapInitialized = true;
         }
 
-        // Inform Leaflet of resize when switching so tiles render correctly
+    // Inform Leaflet of resize when switching so tiles render correctly
         if (target === 'commands-view' && missionMap) {
-            setTimeout(() => missionMap.invalidateSize(), 100);
+            setTimeout(() => {
+                missionMap.invalidateSize();
+            }, 100);
         }
     });
 });
@@ -436,16 +500,16 @@ function initMissionMap() {
         zoomControl: true,
         attributionControl: false,
     }).setView(
-        (window._lastDroneLat && window._lastDroneLon)
-            ? [window._lastDroneLat, window._lastDroneLon]
-            : [-33.456, -70.648],
-        15
+        map.getCenter(),
+        map.getZoom()
     );
 
     // Dark high-contrast tile layer (matches telemetry map)
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
     }).addTo(missionMap);
+
+    // Maps are independent for free view logic
 
     // Drone trail on the mission map
     missionTrail = L.polyline(trailPoints.slice(), {
@@ -457,9 +521,11 @@ function initMissionMap() {
 
     // Drone position marker on mission map
     missionDroneMarker = L.marker(
-        window._lastDroneLat ? [window._lastDroneLat, window._lastDroneLon] : [-33.456, -70.648],
+        map.getCenter(),
         { icon: droneIcon }
     ).addTo(missionMap);
+
+    setupMapControls('mission-map', 'follow-mission', 'center-mission');
 
     // Click on the map to set target coordinates
     missionMap.on('click', (e) => {
@@ -477,7 +543,15 @@ function initMissionMap() {
             }).addTo(missionMap);
         }
     });
+
+    // Add existing POIs to mission map
+    pois.forEach((poi, index) => {
+        const icon = buildPoiIcon(poi.icon, poi.customPath);
+        const marker = L.marker([poi.lat, poi.lon], { icon }).addTo(missionMap);
+        poiMissionMarkers[index] = marker;
+    });
 }
+
 
 // Mission map trail and drone reference (populated when initMissionMap runs)
 let missionTrail = null;
@@ -492,8 +566,9 @@ window._lastDroneLon = null;
 // ORDER MODE SELECTION
 // =============================================
 let selectedMode = null; // null = none, 0=Manual, 1=Waypoint, 2=Orbit
-const modeNames = { 0: 'Control Manual', 1: 'Avanzar', 2: 'Orbitar' };
+const modeNames = { 0: 'Manual Control', 1: 'Advance', 2: 'Orbit' };
 let selectedDirection = 0; // 0=CCW, 1=CW
+
 
 // Show/hide orbit fields based on selected mode
 function updateOrbitFieldsVisibility(mode) {
@@ -534,10 +609,11 @@ function renderWaypoints() {
     grid.innerHTML = '';
 
     if (waypoints.length === 0) {
-        grid.innerHTML = `<div class="waypoint-item empty-state">No hay waypoints registrados. Use el mapa para añadirlos.</div>`;
+        grid.innerHTML = `<div class="waypoint-item empty-state">No waypoints registered. Use the map to add them.</div>`;
         idxSpan.innerText = '–';
         return;
     }
+
 
     idxSpan.innerText = activeWaypointIdx + 1;
 
@@ -573,14 +649,15 @@ document.getElementById('send-command-btn').addEventListener('click', async () =
     const radius = parseFloat(document.getElementById('cmd-radius')?.value) || 50;
 
     if (isNaN(lat) || isNaN(lon)) {
-        alert('Selecciona un punto de destino en el mapa primero.');
+        alert('Please select a destination point on the map first.');
         return;
     }
 
     if (selectedMode === null) {
-        alert('Selecciona un tipo de orden (Avanzar, Orbitar, Manual).');
+        alert('Please select a mode (Advance, Orbit, Manual).');
         return;
     }
+
 
     const wp = { lat, lon, alt, mode: selectedMode, direction: selectedDirection, radius };
     waypoints.push(wp);
@@ -617,15 +694,16 @@ document.getElementById('send-command-btn').addEventListener('click', async () =
         const result = await window.electronAPI.sendCommand(cfg);
         const btn = document.getElementById('send-command-btn');
         if (result.success) {
-            btn.innerText = '✓ Enviado';
+            btn.innerText = '✓ Sent';
             btn.style.background = '#28a745';
-            setTimeout(() => { btn.innerText = 'Enviar'; btn.style.background = ''; }, 2000);
+            setTimeout(() => { btn.innerText = 'Send'; btn.style.background = ''; }, 2000);
         } else {
-            btn.innerText = '✗ Error TX';
+            btn.innerText = '✗ TX Error';
             btn.style.background = '#dc3545';
-            setTimeout(() => { btn.innerText = 'Enviar'; btn.style.background = ''; }, 2500);
+            setTimeout(() => { btn.innerText = 'Send'; btn.style.background = ''; }, 2500);
             console.warn('TX error:', result.error);
         }
+
     } catch (e) {
         console.error('sendCommand failed:', e);
     }
@@ -657,8 +735,270 @@ function buildWpIcon(mode) {
     });
 }
 
-// Initial waypoint grid render
+// =============================================
+// POI MANAGEMENT
+// =============================================
+// =============================================
+// POI MANAGEMENT WITH PERSISTENCE
+// =============================================
+let pois = [];
+const poiMapMarkers = []; // Reference to markers on the main map
+const poiMissionMarkers = []; // Reference to markers on the mission map
+
+function savePoisToStorage() {
+    localStorage.setItem('cadi_pois', JSON.stringify(pois));
+}
+
+function loadPoisFromStorage() {
+    const saved = localStorage.getItem('cadi_pois');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            pois = parsed;
+            // Add markers to maps for each loaded POI
+            pois.forEach(poi => addPoiToMaps(poi));
+        } catch (e) {
+            console.error('Error loading POIs from storage:', e);
+            pois = [];
+        }
+    }
+}
+
+function addPoiToMaps(poi) {
+    const icon = buildPoiIcon(poi.icon, poi.customPath);
+    const m1 = L.marker([poi.lat, poi.lon], { icon }).addTo(map);
+    poiMapMarkers.push(m1);
+    
+    if (missionMap) {
+        const m2 = L.marker([poi.lat, poi.lon], { icon }).addTo(missionMap);
+        poiMissionMarkers.push(m2);
+    }
+}
+
+function buildPoiIcon(iconKey, customPath = null) {
+    if (iconKey === 'custom' && customPath) {
+        return L.divIcon({
+            className: '',
+            html: `<img src="${customPath}" style="width:32px; height:32px; filter: drop-shadow(0 0 5px rgba(255,255,255,0.5));" onerror="this.src='assets/icon.png'">`,
+            iconAnchor: [16, 16]
+        });
+    }
+
+    const icons = {
+        'default': { color: '#ffffff', label: '📌' },
+        'warning': { color: '#ff4d4d', label: '⚠️' },
+        'target' : { color: '#00e5ff', label: '🎯' },
+        'home'   : { color: '#00e676', label: '🏠' },
+    };
+    const cfg = icons[iconKey] || icons['default'];
+    return L.divIcon({
+        className: '',
+        html: `<div style="
+            min-width:28px; height:28px; border-radius:50%;
+            background: rgba(0,0,0,0.6);
+            border: 2px solid ${cfg.color};
+            box-shadow: 0 0 8px ${cfg.color};
+            display:flex; align-items:center; justify-content:center;
+            font-size:16px; cursor:pointer;
+        ">${cfg.label}</div>`,
+        iconAnchor: [14, 14]
+    });
+}
+
+function renderPois() {
+    const grid = document.getElementById('poi-grid');
+    grid.innerHTML = '';
+
+    if (pois.length === 0) {
+        grid.innerHTML = `<div class="waypoint-item empty-state">No POIs added.</div>`;
+        return;
+    }
+
+    pois.forEach((poi, i) => {
+        const el = document.createElement('div');
+        el.className = 'waypoint-item';
+        el.style.display = 'flex';
+        el.style.justifyContent = 'space-between';
+        el.style.alignItems = 'center';
+        
+        const info = document.createElement('div');
+        info.style.flex = '1';
+        info.style.cursor = 'pointer';
+        info.innerHTML = `
+            <span class="wp-number">POI ${i + 1}</span>
+            Lat: ${poi.lat.toFixed(6)} | Lon: ${poi.lon.toFixed(6)}<br>
+            Type: ${poi.icon === 'custom' ? 'Custom' : poi.icon}
+        `;
+        info.addEventListener('click', () => {
+            map.setView([poi.lat, poi.lon], 17);
+            if (missionMap) missionMap.setView([poi.lat, poi.lon], 17);
+        });
+
+        const actions = document.createElement('div');
+        actions.style.display = 'flex';
+        actions.style.gap = '5px';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'icon-btn';
+        editBtn.style.padding = '2px';
+        editBtn.innerHTML = '<span class="icon" style="font-size:16px;">edit</span>';
+        editBtn.title = 'Edit POI';
+        editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            editPoi(i);
+        });
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'icon-btn';
+        delBtn.style.padding = '2px';
+        delBtn.style.color = 'var(--critical-color)';
+        delBtn.innerHTML = '<span class="icon" style="font-size:16px;">delete</span>';
+        delBtn.title = 'Delete POI';
+        delBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deletePoi(i);
+        });
+
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        
+        el.appendChild(info);
+        el.appendChild(actions);
+        grid.appendChild(el);
+    });
+}
+
+function deletePoi(index) {
+    if (confirm('Delete this POI?')) {
+        // Remove from maps
+        if (poiMapMarkers[index]) map.removeLayer(poiMapMarkers[index]);
+        if (poiMissionMarkers[index]) missionMap.removeLayer(poiMissionMarkers[index]);
+        
+        // Remove references
+        poiMapMarkers.splice(index, 1);
+        poiMissionMarkers.splice(index, 1);
+        pois.splice(index, 1);
+        
+        savePoisToStorage();
+        renderPois();
+    }
+}
+
+function editPoi(index) {
+    const poi = pois[index];
+    document.getElementById('poi-lat').value = poi.lat;
+    document.getElementById('poi-lon').value = poi.lon;
+    document.getElementById('poi-icon-select').value = poi.icon;
+    
+    if (poi.icon === 'custom') {
+        document.getElementById('poi-custom-icon').style.display = 'block';
+        document.getElementById('poi-custom-icon').value = poi.customPath || '';
+    } else {
+        document.getElementById('poi-custom-icon').style.display = 'none';
+    }
+    
+    // Switch to ADD tab if not already there (modal is open anyway)
+    // We'll change the ADD button to "UPDATE"
+    const addBtn = document.getElementById('add-poi-btn');
+    addBtn.innerText = 'UPDATE';
+    addBtn.dataset.editIndex = index;
+}
+
+// Show/hide custom icon input
+const poiIconSelect = document.getElementById('poi-icon-select');
+const poiCustomInput = document.getElementById('poi-custom-icon');
+poiIconSelect.addEventListener('change', () => {
+    poiCustomInput.style.display = (poiIconSelect.value === 'custom') ? 'block' : 'none';
+});
+
+document.getElementById('add-poi-btn').addEventListener('click', () => {
+    const btn = document.getElementById('add-poi-btn');
+    const lat = parseFloat(document.getElementById('poi-lat').value);
+    const lon = parseFloat(document.getElementById('poi-lon').value);
+    const iconType = poiIconSelect.value;
+    const customPath = poiCustomInput.value.trim();
+
+    if (isNaN(lat) || isNaN(lon)) {
+        alert('Enter valid Lat/Lon coordinates for the POI.');
+        return;
+    }
+
+    if (btn.innerText === 'UPDATE') {
+        const index = parseInt(btn.dataset.editIndex);
+        // Remove old markers
+        if (poiMapMarkers[index]) map.removeLayer(poiMapMarkers[index]);
+        if (poiMissionMarkers[index]) missionMap.removeLayer(poiMissionMarkers[index]);
+        
+        // Update POI data
+        pois[index] = { lat, lon, icon: iconType, customPath };
+        
+        // Re-add to maps
+        const icon = buildPoiIcon(iconType, customPath);
+        poiMapMarkers[index] = L.marker([lat, lon], { icon }).addTo(map);
+        if (missionMap) {
+            poiMissionMarkers[index] = L.marker([lat, lon], { icon }).addTo(missionMap);
+        }
+        
+        btn.innerText = 'ADD';
+        delete btn.dataset.editIndex;
+    } else {
+        const poi = { lat, lon, icon: iconType, customPath };
+        pois.push(poi);
+        addPoiToMaps(poi);
+    }
+
+    savePoisToStorage();
+    renderPois();
+    
+    // Clear inputs
+    document.getElementById('poi-lat').value = '';
+    document.getElementById('poi-lon').value = '';
+    document.getElementById('poi-custom-icon').value = '';
+});
+
+// Drone Icon Refresher
+function updateDroneMarkerStyles() {
+    const styleType = document.querySelector('input[name="drone-style"]:checked').value;
+    const color = document.getElementById('drone-color-picker').value;
+    const imagePath = document.getElementById('drone-icon-path').value.trim() || 'assets/icon.png';
+
+    let newIcon;
+    if (styleType === 'glow') {
+        newIcon = L.divIcon({
+            className: '',
+            html: `<div style="
+                width:18px;height:18px;
+                border-radius:50%;
+                background:radial-gradient(circle, ${color} 0%, #4589f5 60%, rgba(69,137,245,0) 100%);
+                box-shadow:0 0 12px ${color}, 0 0 24px rgba(0,229,255,0.5);
+                border:2px solid #fff;
+            "></div>`,
+            iconAnchor: [9, 9]
+        });
+    } else {
+        newIcon = L.divIcon({
+            className: '',
+            html: `<img src="${imagePath}" style="width:30px; height:30px; filter: drop-shadow(0 0 8px ${color});" onerror="this.src='assets/icon.png'">`,
+            iconAnchor: [15, 15]
+        });
+    }
+
+    if (droneMarker) droneMarker.setIcon(newIcon);
+    if (missionDroneMarker) missionDroneMarker.setIcon(newIcon);
+}
+
+document.querySelectorAll('input[name="drone-style"]').forEach(radio => {
+    radio.addEventListener('change', updateDroneMarkerStyles);
+});
+document.getElementById('drone-color-picker').addEventListener('input', updateDroneMarkerStyles);
+document.getElementById('drone-icon-path').addEventListener('input', updateDroneMarkerStyles);
+
+// Initial renders
 renderWaypoints();
+loadPoisFromStorage();
+renderPois();
+listPorts();
+setupMapControls('map', 'follow-telemetry', 'center-telemetry');
 
 // =============================================
 // OFFLINE WATCHDOG
@@ -693,3 +1033,4 @@ window._telemetryUpdateHook = function(lat, lon) {
     _offlineTimer = setTimeout(() => setOnlineState(false), 3000);
     setOnlineState(true);
 };
+

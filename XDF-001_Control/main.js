@@ -59,14 +59,16 @@ function calculateCRC16(buffer, start, length) {
 let port;
 let serialBuffer = Buffer.alloc(0);
 
-ipcMain.handle("connect-serial", async (event, portPath) => {
+ipcMain.handle("connect-serial", async (event, portPath, baudRate) => {
   try {
     if (port && port.isOpen) {
       await new Promise((resolve) => port.close(resolve));
     }
 
     serialBuffer = Buffer.alloc(0); // Reset buffer on new connection
-    port = new SerialPort({ path: portPath, baudRate: 115200 });
+    const rate = parseInt(baudRate) || 115200;
+    port = new SerialPort({ path: portPath, baudRate: rate });
+    console.log(`Serial Port connected: ${portPath} @ ${rate}bps`);
 
     port.on("data", (chunk) => {
       serialBuffer = Buffer.concat([serialBuffer, chunk]);
@@ -135,6 +137,7 @@ ipcMain.handle("connect-serial", async (event, portPath) => {
             serialBuffer = serialBuffer.subarray(expectedSize);
         } else {
             // CRC Mismatch
+            console.warn(`CRC Mismatch: Calculated ${calculatedCRC.toString(16)}, Received ${receivedCRC.toString(16)}`);
             serialBuffer = serialBuffer.subarray(expectedSize);
         }
       }
