@@ -92,7 +92,7 @@ const telemetryChart = new Chart(ctx, {
                 hidden: true
             },
             {
-                label: 'Temperature',
+                label: 'G-Force',
                 data: [],
                 borderColor: '#00e676',
                 backgroundColor: 'rgba(0, 230, 118, 0.1)',
@@ -296,7 +296,9 @@ window.electronAPI.onTelemetryData((data) => {
     // Update Metrics
     document.querySelector('#altitude .metric-value').innerHTML = `${alt.toFixed(1)} <span class="unit">m</span>`;
     document.querySelector('#speed .metric-value').innerHTML = `${speed.toFixed(1)} <span class="unit">Km/h</span>`;
-    document.querySelector('#temperature .metric-value').innerHTML = `${gforce.toFixed(2)} <span class="unit">g</span>`;
+    const powerPct = Math.round((cmd_throttle / 180) * 100);
+    document.querySelector('#power .metric-value').innerHTML = `${powerPct} <span class="unit">%</span>`;
+    document.querySelector('#gforce .metric-value').innerHTML = `${gforce.toFixed(2)} <span class="unit">g</span>`;
 
     // Update Orientation
     document.getElementById('pitch').innerText = `${pitch.toFixed(1)}°`;

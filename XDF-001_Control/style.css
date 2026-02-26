@@ -224,6 +224,10 @@ header {
 }
 
 /* Orientation Card */
+.orientation-card {
+  grid-column: span 2;
+}
+
 .orientation-table {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -288,7 +292,7 @@ header {
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  justify-content:center;
+  justify-content: center;
   cursor: pointer;
   backdrop-filter: blur(4px);
   transition: all 0.2s;
