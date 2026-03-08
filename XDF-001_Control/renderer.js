@@ -317,6 +317,9 @@ window.electronAPI.onTelemetryData((data) => {
     // Update drone trail on both maps
     updateTrail(lat, lon);
 
+    // Call HUD drawing
+    drawHUD(pitch, roll, bearing, alt, speed);
+
     // Track last known position for mission map auto-centering
     if (window._telemetryUpdateHook) window._telemetryUpdateHook(lat, lon);
     window._lastDroneLat = lat;
@@ -1035,4 +1038,397 @@ window._telemetryUpdateHook = function(lat, lon) {
     _offlineTimer = setTimeout(() => setOnlineState(false), 3000);
     setOnlineState(true);
 };
+
+// =============================================
+// HUD OVERLAY LAYER
+// =============================================
+const hudCanvas = document.getElementById('hud-canvas');
+let hudCtx = null;
+if (hudCanvas) {
+    hudCtx = hudCanvas.getContext('2d');
+}
+
+function resizeHudCanvas() {
+    if (hudCanvas) {
+        // Must match visual size
+        hudCanvas.width = hudCanvas.clientWidth;
+        hudCanvas.height = hudCanvas.clientHeight;
+        if (!window._lastTelemetryForHud) {
+            drawHUD(0, 0, 0, 0, 0); // initial draw
+        } else {
+            const t = window._lastTelemetryForHud;
+            drawHUD(t.pitch, t.roll, t.bearing, t.alt, t.speed);
+        }
+    }
+}
+window.addEventListener('resize', resizeHudCanvas);
+
+// =============================================
+// 3D GEOSPATIAL MATH & PROJECTION
+// =============================================
+function toRad(deg) { return deg * Math.PI / 180; }
+function toDeg(rad) { return rad * 180 / Math.PI; }
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // meters
+    const f1 = toRad(lat1);
+    const f2 = toRad(lat2);
+    const df = toRad(lat2 - lat1);
+    const dl = toRad(lon2 - lon1);
+    const a = Math.sin(df/2) * Math.sin(df/2) +
+              Math.cos(f1) * Math.cos(f2) *
+              Math.sin(dl/2) * Math.sin(dl/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+function calculateBearing(lat1, lon1, lat2, lon2) {
+    const f1 = toRad(lat1);
+    const f2 = toRad(lat2);
+    const dl = toRad(lon2 - lon1);
+    const y = Math.sin(dl) * Math.cos(f2);
+    const x = Math.cos(f1) * Math.sin(f2) -
+              Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+    const h = Math.atan2(y, x);
+    return (toDeg(h) + 360) % 360;
+}
+
+function project3DTo2D(wpLat, wpLon, wpAlt, dLat, dLon, dAlt, pitch, roll, yaw, cx, cy) {
+    // 1. Calculate relative physical position
+    const dist = calculateDistance(dLat, dLon, wpLat, wpLon);
+    if (dist < 1) return null; // Too close
+
+    const targetBearing = calculateBearing(dLat, dLon, wpLat, wpLon);
+    const dAltM = wpAlt - dAlt;
+
+    // 2. Relative angle from camera center (yaw diff)
+    let headingDiff = targetBearing - yaw;
+    if (headingDiff > 180) headingDiff -= 360;
+    if (headingDiff < -180) headingDiff += 360;
+
+    // Relative vertical angle (pitch diff)
+    const elevationAngle = toDeg(Math.atan2(dAltM, dist));
+    const vertDiff = elevationAngle - pitch;
+
+    // FOV specs for Caddx Baby Ratel 2
+    const H_FOV = 115; 
+    const V_FOV = H_FOV * (cy / cx); // Approximated aspect ratio mapping
+    
+    // Pixels per degree
+    const pxPerDegX = (cx * 2) / H_FOV;
+    const pxPerDegY = (cy * 2) / V_FOV;
+
+    // Un-rolled X, Y on screen
+    const xUnrolled = cx + (headingDiff * pxPerDegX);
+    const yUnrolled = cy - (vertDiff * pxPerDegY); // screen Y decreases going up
+
+    // Apply Camera Roll
+    const rollRad = toRad(roll);
+    const dx = xUnrolled - cx;
+    const dy = yUnrolled - cy;
+    const finalX = cx + (dx * Math.cos(rollRad) + dy * Math.sin(rollRad));
+    const finalY = cy + (-dx * Math.sin(rollRad) + dy * Math.cos(rollRad));
+
+    return {
+        x: finalX,
+        y: finalY,
+        dist: dist,
+        inView: (Math.abs(headingDiff) < H_FOV/1.8),
+        headingDiff: headingDiff
+    };
+}
+
+function drawHUD(pitch, roll, bearing, alt, speed) {
+    if (!hudCtx || !hudCanvas) return;
+    
+    // Save last telemetry to re-draw on resize
+    window._lastTelemetryForHud = { pitch, roll, bearing, alt, speed };
+
+    const w = hudCanvas.width;
+    const h = hudCanvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Clear previous frame
+    hudCtx.clearRect(0, 0, w, h);
+
+    // Styling constants
+    hudCtx.strokeStyle = 'rgba(0, 229, 255, 0.8)';
+    hudCtx.fillStyle = 'rgba(0, 229, 255, 0.8)';
+    hudCtx.lineWidth = 2;
+    hudCtx.font = '14px Orbitron, sans-serif';
+    hudCtx.textAlign = 'center';
+    hudCtx.textBaseline = 'middle';
+
+    // 1. Static Crosshairs / Center Marks
+    hudCtx.beginPath();
+    // Center dot
+    hudCtx.arc(cx, cy, 3, 0, Math.PI * 2);
+    // Left wing
+    hudCtx.moveTo(cx - 50, cy);
+    hudCtx.lineTo(cx - 20, cy);
+    hudCtx.lineTo(cx - 20, cy + 10);
+    // Right wing
+    hudCtx.moveTo(cx + 50, cy);
+    hudCtx.lineTo(cx + 20, cy);
+    hudCtx.lineTo(cx + 20, cy + 10);
+    // Top tick
+    hudCtx.moveTo(cx, cy - 20);
+    hudCtx.lineTo(cx, cy - 10);
+    hudCtx.stroke();
+
+    // 2. Artificial Horizon (Pitch/Roll)
+    hudCtx.save();
+    hudCtx.translate(cx, cy);
+    // Rotate canvas by roll (negative because browser Y is down)
+    hudCtx.rotate(-roll * Math.PI / 180);
+    
+    // Draw Pitch ladder
+    // 1 degree of pitch = 3 pixels of displacement (was 5)
+    const pitchScale = 3.5;
+    const pitchOffset = pitch * pitchScale;
+    hudCtx.translate(0, pitchOffset);
+
+    // Draw lines for pitch increments
+    for (let p = -45; p <= 45; p += 15) {
+        if (p === 0) continue; // Skip 0 line, we have the crosshair
+        
+        const y = -p * pitchScale;
+        const lineW = p > 0 ? 50 : 30; // positive pitch uses wider lines
+        
+        hudCtx.beginPath();
+        if (p < 0) {
+            hudCtx.setLineDash([5, 5]); // dashed for down pitch
+        }
+        
+        hudCtx.moveTo(-lineW, y);
+        hudCtx.lineTo(-lineW/3, y);
+        hudCtx.moveTo(lineW/3, y);
+        hudCtx.lineTo(lineW, y);
+        
+        // Draw tick ends
+        hudCtx.moveTo(-lineW, y);
+        hudCtx.lineTo(-lineW, y + (p > 0 ? 5 : -5));
+        hudCtx.moveTo(lineW, y);
+        hudCtx.lineTo(lineW, y + (p > 0 ? 5 : -5));
+        
+        hudCtx.stroke();
+        hudCtx.setLineDash([]);
+        
+        // Pitch text
+        hudCtx.textAlign = 'right';
+        hudCtx.fillText(Math.abs(p), -lineW - 5, y);
+        hudCtx.textAlign = 'left';
+        hudCtx.fillText(Math.abs(p), lineW + 5, y);
+    }
+    
+    // Draw horizon line
+    hudCtx.beginPath();
+    hudCtx.moveTo(-120, 0);
+    hudCtx.lineTo(-60, 0);
+    hudCtx.moveTo(60, 0);
+    hudCtx.lineTo(120, 0);
+    hudCtx.stroke();
+    
+    hudCtx.restore();
+
+    // 3. Roll Indicator (Top Arc)
+    hudCtx.save();
+    hudCtx.translate(cx, cy);
+    const rollRadius = Math.min(cx, cy) - 50;
+    
+    if (rollRadius > 0) {
+        // Draw static roll ticks
+        hudCtx.beginPath();
+        for (let a = -60; a <= 60; a += 15) {
+            const rad = (a - 90) * Math.PI / 180;
+            const x1 = Math.cos(rad) * rollRadius;
+            const y1 = Math.sin(rad) * rollRadius;
+            const len = a % 30 === 0 ? 10 : 5;
+            const x2 = Math.cos(rad) * (rollRadius + len);
+            const y2 = Math.sin(rad) * (rollRadius + len);
+            hudCtx.moveTo(x1, y1);
+            hudCtx.lineTo(x2, y2);
+        }
+        hudCtx.stroke();
+        
+        // Draw moving roll pointer
+        hudCtx.rotate(-roll * Math.PI / 180);
+        hudCtx.beginPath();
+        hudCtx.moveTo(0, -rollRadius + 5);
+        hudCtx.lineTo(8, -rollRadius + 20);
+        hudCtx.lineTo(-8, -rollRadius + 20);
+        hudCtx.closePath();
+        hudCtx.fill();
+        hudCtx.strokeStyle = 'rgba(0,0,0,0.5)';
+        hudCtx.stroke(); // small border for contrast
+    }
+    hudCtx.restore();
+    
+    // 4. Heading Tape (Top Center)
+    const tapeY = 35;
+    const tapeWidth = Math.min(250, w * 0.5);
+    hudCtx.save();
+    hudCtx.beginPath();
+    hudCtx.rect(cx - tapeWidth/2, tapeY - 20, tapeWidth, 40);
+    hudCtx.clip();
+    
+    // Degree spacing: say 5 pixels per degree
+    const tapeScale = 4;
+    hudCtx.textAlign = 'center';
+    
+    // We draw from bearing - 30 to bearing + 30
+    const startHdg = Math.floor(bearing - 30);
+    const endHdg = Math.ceil(bearing + 30);
+    
+    for (let h_val = startHdg; h_val <= endHdg; h_val++) {
+        if (h_val % 5 !== 0) continue; // Only draw every 5 degrees
+        
+        let displayHdg = h_val;
+        if (displayHdg < 0) displayHdg += 360;
+        if (displayHdg >= 360) displayHdg -= 360;
+        
+        const dx = (h_val - bearing) * tapeScale;
+        const tx = cx + dx;
+        
+        hudCtx.beginPath();
+        if (h_val % 10 === 0) {
+            hudCtx.moveTo(tx, tapeY);
+            hudCtx.lineTo(tx, tapeY - 8);
+            
+            // Format 0 as N, 90 as E, 180 as S, 270 as W
+            let label = displayHdg.toString().padStart(3, '0');
+            if (displayHdg === 0 || displayHdg === 360) label = 'N';
+            if (displayHdg === 90) label = 'E';
+            if (displayHdg === 180) label = 'S';
+            if (displayHdg === 270) label = 'W';
+            
+            hudCtx.fillText(label, tx, tapeY + 12);
+        } else {
+            hudCtx.moveTo(tx, tapeY);
+            hudCtx.lineTo(tx, tapeY - 4);
+        }
+        hudCtx.stroke();
+    }
+    
+    // Heading center pip
+    hudCtx.beginPath();
+    hudCtx.moveTo(cx, tapeY + 22);
+    hudCtx.lineTo(cx - 5, tapeY + 30);
+    hudCtx.lineTo(cx + 5, tapeY + 30);
+    hudCtx.closePath();
+    hudCtx.fill();
+    hudCtx.restore();
+
+    // 5. Left/Right Info (Speed and Alt)
+    const paddingX = 40;
+    const tapeH = Math.min(200, h * 0.6);
+    const tapeStartY = cy - tapeH / 2;
+
+    hudCtx.textAlign = 'right';
+    hudCtx.font = '14px Orbitron, sans-serif';
+    hudCtx.fillText(`SPD`, paddingX + 35, tapeStartY - 10);
+    hudCtx.fillText(`${speed.toFixed(1)} km/h`, paddingX + 50, cy + tapeH/2 + 20);
+    
+    hudCtx.textAlign = 'left';
+    hudCtx.fillText(`ALT`, w - paddingX - 35, tapeStartY - 10);
+    hudCtx.fillText(`${alt.toFixed(1)} m`, w - paddingX - 50, cy + tapeH/2 + 20);
+
+    // Speed / Alt simple tapes (vertical boxes)
+    // Speed (Left)
+    hudCtx.strokeRect(paddingX - 10, tapeStartY, 35, tapeH);
+    hudCtx.beginPath();
+    hudCtx.moveTo(paddingX + 25, cy);
+    hudCtx.lineTo(paddingX + 35, cy - 5);
+    hudCtx.lineTo(paddingX + 35, cy + 5);
+    hudCtx.closePath();
+    hudCtx.fill();
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText(speed.toFixed(0), paddingX + 7, cy);
+
+    // Alt (Right)
+    hudCtx.strokeRect(w - paddingX - 25, tapeStartY, 35, tapeH);
+    hudCtx.beginPath();
+    hudCtx.moveTo(w - paddingX - 25, cy);
+    hudCtx.lineTo(w - paddingX - 35, cy - 5);
+    hudCtx.lineTo(w - paddingX - 35, cy + 5);
+    hudCtx.closePath();
+    hudCtx.fill();
+    hudCtx.textAlign = 'center';
+    hudCtx.fillText(alt.toFixed(0), w - paddingX - 7, cy);
+
+    // 6. 3D Augmented Reality Waypoints
+    // We need current lat/lon from the persistent window vars
+    if (window._lastDroneLat && window._lastDroneLon) {
+        hudCtx.font = '12px Orbitron, sans-serif';
+        hudCtx.lineWidth = 1.5;
+        
+        // Loop through MISSION waypoints
+        for (let i = 0; i < waypoints.length; i++) {
+            const wp = waypoints[i];
+            const proj = project3DTo2D(
+                wp.lat, wp.lon, wp.alt, 
+                window._lastDroneLat, window._lastDroneLon, alt, 
+                pitch, roll, bearing, cx, cy
+            );
+            if (!proj) continue;
+
+            const isCurrentWP = (i === activeWaypointIdx);
+            hudCtx.strokeStyle = isCurrentWP ? 'rgba(0, 255, 100, 0.9)' : 'rgba(255, 165, 0, 0.7)';
+            hudCtx.fillStyle = hudCtx.strokeStyle;
+
+            if (proj.inView) {
+                // Determine size based on distance (clamp bounds)
+                let size = Math.max(10, Math.min(30, 1000 / Math.max(proj.dist, 10)));
+                
+                // Draw Diamond
+                hudCtx.beginPath();
+                hudCtx.moveTo(proj.x, proj.y - size);
+                hudCtx.lineTo(proj.x + size, proj.y);
+                hudCtx.lineTo(proj.x, proj.y + size);
+                hudCtx.lineTo(proj.x - size, proj.y);
+                hudCtx.closePath();
+                hudCtx.stroke();
+                
+                // Active WP gets an inner dot
+                if (isCurrentWP) {
+                    hudCtx.beginPath();
+                    hudCtx.arc(proj.x, proj.y, 2, 0, Math.PI*2);
+                    hudCtx.fill();
+                }
+
+                // Draw Text [WPx dist]
+                hudCtx.textAlign = 'center';
+                let dText = proj.dist > 1000 ? (proj.dist/1000).toFixed(1) + 'k' : proj.dist.toFixed(0) + 'm';
+                hudCtx.fillText(`WP${i+1} ${dText}`, proj.x, proj.y - size - 8);
+            } else {
+                // Off-screen pointer logic
+                if (isCurrentWP) {
+                    // Draw chevron on the edge of the screen
+                    const pointerOffset = 60;
+                    hudCtx.beginPath();
+                    if (proj.headingDiff > 0) {
+                        // WP is to the right
+                        hudCtx.moveTo(w - pointerOffset, cy - 15);
+                        hudCtx.lineTo(w - pointerOffset + 15, cy);
+                        hudCtx.lineTo(w - pointerOffset, cy + 15);
+                    } else {
+                        // WP is to the left
+                        hudCtx.moveTo(pointerOffset, cy - 15);
+                        hudCtx.lineTo(pointerOffset - 15, cy);
+                        hudCtx.lineTo(pointerOffset, cy + 15);
+                    }
+                    hudCtx.stroke();
+                    hudCtx.textAlign = proj.headingDiff > 0 ? 'right' : 'left';
+                    let dText = proj.dist > 1000 ? (proj.dist/1000).toFixed(1) + 'k' : proj.dist.toFixed(0) + 'm';
+                    hudCtx.fillText(`WP${i+1}`, proj.headingDiff > 0 ? w - pointerOffset - 10 : pointerOffset + 10, cy - 5);
+                    hudCtx.fillText(dText, proj.headingDiff > 0 ? w - pointerOffset - 10 : pointerOffset + 10, cy + 10);
+                }
+            }
+        }
+    }
+}
+
+// Ensure the canvas is sized correctly later
+setTimeout(resizeHudCanvas, 1000);
 

@@ -503,7 +503,7 @@
       "gencad": "",
       "idf": "",
       "netlist": "",
-      "plot": "C:/Users/cevac/XDF-001/PCB/Gerbers/",
+      "plot": "../../../XDF-001/PCB/Gerbers/",
       "pos_files": "",
       "specctra_dsn": "",
       "step": "",
