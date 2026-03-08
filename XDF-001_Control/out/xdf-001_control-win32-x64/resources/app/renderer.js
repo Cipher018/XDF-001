@@ -1063,6 +1063,81 @@ function resizeHudCanvas() {
 }
 window.addEventListener('resize', resizeHudCanvas);
 
+// =============================================
+// 3D GEOSPATIAL MATH & PROJECTION
+// =============================================
+function toRad(deg) { return deg * Math.PI / 180; }
+function toDeg(rad) { return rad * 180 / Math.PI; }
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // meters
+    const f1 = toRad(lat1);
+    const f2 = toRad(lat2);
+    const df = toRad(lat2 - lat1);
+    const dl = toRad(lon2 - lon1);
+    const a = Math.sin(df/2) * Math.sin(df/2) +
+              Math.cos(f1) * Math.cos(f2) *
+              Math.sin(dl/2) * Math.sin(dl/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+function calculateBearing(lat1, lon1, lat2, lon2) {
+    const f1 = toRad(lat1);
+    const f2 = toRad(lat2);
+    const dl = toRad(lon2 - lon1);
+    const y = Math.sin(dl) * Math.cos(f2);
+    const x = Math.cos(f1) * Math.sin(f2) -
+              Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+    const h = Math.atan2(y, x);
+    return (toDeg(h) + 360) % 360;
+}
+
+function project3DTo2D(wpLat, wpLon, wpAlt, dLat, dLon, dAlt, pitch, roll, yaw, cx, cy) {
+    // 1. Calculate relative physical position
+    const dist = calculateDistance(dLat, dLon, wpLat, wpLon);
+    if (dist < 1) return null; // Too close
+
+    const targetBearing = calculateBearing(dLat, dLon, wpLat, wpLon);
+    const dAltM = wpAlt - dAlt;
+
+    // 2. Relative angle from camera center (yaw diff)
+    let headingDiff = targetBearing - yaw;
+    if (headingDiff > 180) headingDiff -= 360;
+    if (headingDiff < -180) headingDiff += 360;
+
+    // Relative vertical angle (pitch diff)
+    const elevationAngle = toDeg(Math.atan2(dAltM, dist));
+    const vertDiff = elevationAngle - pitch;
+
+    // FOV specs for Caddx Baby Ratel 2
+    const H_FOV = 115; 
+    const V_FOV = H_FOV * (cy / cx); // Approximated aspect ratio mapping
+    
+    // Pixels per degree
+    const pxPerDegX = (cx * 2) / H_FOV;
+    const pxPerDegY = (cy * 2) / V_FOV;
+
+    // Un-rolled X, Y on screen
+    const xUnrolled = cx + (headingDiff * pxPerDegX);
+    const yUnrolled = cy - (vertDiff * pxPerDegY); // screen Y decreases going up
+
+    // Apply Camera Roll
+    const rollRad = toRad(roll);
+    const dx = xUnrolled - cx;
+    const dy = yUnrolled - cy;
+    const finalX = cx + (dx * Math.cos(rollRad) + dy * Math.sin(rollRad));
+    const finalY = cy + (-dx * Math.sin(rollRad) + dy * Math.cos(rollRad));
+
+    return {
+        x: finalX,
+        y: finalY,
+        dist: dist,
+        inView: (Math.abs(headingDiff) < H_FOV/1.8),
+        headingDiff: headingDiff
+    };
+}
+
 function drawHUD(pitch, roll, bearing, alt, speed) {
     if (!hudCtx || !hudCanvas) return;
     
@@ -1281,6 +1356,77 @@ function drawHUD(pitch, roll, bearing, alt, speed) {
     hudCtx.fill();
     hudCtx.textAlign = 'center';
     hudCtx.fillText(alt.toFixed(0), w - paddingX - 7, cy);
+
+    // 6. 3D Augmented Reality Waypoints
+    // We need current lat/lon from the persistent window vars
+    if (window._lastDroneLat && window._lastDroneLon) {
+        hudCtx.font = '12px Orbitron, sans-serif';
+        hudCtx.lineWidth = 1.5;
+        
+        // Loop through MISSION waypoints
+        for (let i = 0; i < waypoints.length; i++) {
+            const wp = waypoints[i];
+            const proj = project3DTo2D(
+                wp.lat, wp.lon, wp.alt, 
+                window._lastDroneLat, window._lastDroneLon, alt, 
+                pitch, roll, bearing, cx, cy
+            );
+            if (!proj) continue;
+
+            const isCurrentWP = (i === activeWaypointIdx);
+            hudCtx.strokeStyle = isCurrentWP ? 'rgba(0, 255, 100, 0.9)' : 'rgba(255, 165, 0, 0.7)';
+            hudCtx.fillStyle = hudCtx.strokeStyle;
+
+            if (proj.inView) {
+                // Determine size based on distance (clamp bounds)
+                let size = Math.max(10, Math.min(30, 1000 / Math.max(proj.dist, 10)));
+                
+                // Draw Diamond
+                hudCtx.beginPath();
+                hudCtx.moveTo(proj.x, proj.y - size);
+                hudCtx.lineTo(proj.x + size, proj.y);
+                hudCtx.lineTo(proj.x, proj.y + size);
+                hudCtx.lineTo(proj.x - size, proj.y);
+                hudCtx.closePath();
+                hudCtx.stroke();
+                
+                // Active WP gets an inner dot
+                if (isCurrentWP) {
+                    hudCtx.beginPath();
+                    hudCtx.arc(proj.x, proj.y, 2, 0, Math.PI*2);
+                    hudCtx.fill();
+                }
+
+                // Draw Text [WPx dist]
+                hudCtx.textAlign = 'center';
+                let dText = proj.dist > 1000 ? (proj.dist/1000).toFixed(1) + 'k' : proj.dist.toFixed(0) + 'm';
+                hudCtx.fillText(`WP${i+1} ${dText}`, proj.x, proj.y - size - 8);
+            } else {
+                // Off-screen pointer logic
+                if (isCurrentWP) {
+                    // Draw chevron on the edge of the screen
+                    const pointerOffset = 60;
+                    hudCtx.beginPath();
+                    if (proj.headingDiff > 0) {
+                        // WP is to the right
+                        hudCtx.moveTo(w - pointerOffset, cy - 15);
+                        hudCtx.lineTo(w - pointerOffset + 15, cy);
+                        hudCtx.lineTo(w - pointerOffset, cy + 15);
+                    } else {
+                        // WP is to the left
+                        hudCtx.moveTo(pointerOffset, cy - 15);
+                        hudCtx.lineTo(pointerOffset - 15, cy);
+                        hudCtx.lineTo(pointerOffset, cy + 15);
+                    }
+                    hudCtx.stroke();
+                    hudCtx.textAlign = proj.headingDiff > 0 ? 'right' : 'left';
+                    let dText = proj.dist > 1000 ? (proj.dist/1000).toFixed(1) + 'k' : proj.dist.toFixed(0) + 'm';
+                    hudCtx.fillText(`WP${i+1}`, proj.headingDiff > 0 ? w - pointerOffset - 10 : pointerOffset + 10, cy - 5);
+                    hudCtx.fillText(dText, proj.headingDiff > 0 ? w - pointerOffset - 10 : pointerOffset + 10, cy + 10);
+                }
+            }
+        }
+    }
 }
 
 // Ensure the canvas is sized correctly later
