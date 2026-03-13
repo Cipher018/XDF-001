@@ -1,4 +1,4 @@
-﻿Item;Description;Quantity ;Unit price;Total Price;Source;Running Total ($ with Tax)
+Item;Description;Quantity ;Unit price;Total Price;Source;Running Total ($ with Tax)
 ESP-32 Devkit 38 pins;Dev board that will allow processing of telemetry, air-to-ground communication and autonomous operations based on vector operations;1;4,23;4,23;Aliexpress;5,03
 PCA9685 Servomotor Driver;Servomotor driver that allows control of up to 16 servomotors using only 2 pins, mainly used to avoid using all the pins of the ESP32 and for more sophisticated control via binary control;1;1,2;1,2;Aliexpress;1,43
 nRF24l01+PLA Module;"Radio module that allows medium-range air-to-ground communication without major interference; a PLA antenna is added to maximize range.";2;2,31;4,62;Aliexpress;5,5
@@ -6,7 +6,7 @@ NEO6M GPS Module;GPS module that allows knowing the exact position of the aircra
 MP1584EN Module;The 3.3 Volt voltage regulator allows for the safe and continuous powering of sensitive modules such as the nrf24l01 directly from the VEC.;1;0,67;0,67;Aliexpress;0,8
 MPU-9250 Module;Magnetometer, gyroscope and accelerometer that will allow knowing the orientation and acceleration that the plane suffers in flight, also key for vector calculation thanks to being able to know the heading;1;2,31;2,31;Aliexpress;2,75
 4 pcs MG90S Servomotor;Servomotors with metal gears that allow for high-performance and precise movement of control surfaces;2;7,26;14,52;Aliexpress;17,28
-NEEBRC 3542 1000KV  2-4S Outrunner Brushless Motor for RC Fixed Wing Airplane;A brushless motor that generates thrust for the aircraft was chosen in this case due to the aircraft's dimensions.It includes ESC and VEC which allows control via a microcontroller and voltage regulation from the LiPo battery.;1;39,52;39,52;Aliexpress;47,03
+NEEBRC 3542 1000KV  2-4S Outrunner Brushless Motor for RC Fixed Wing Airplane;A brushless motor that generates thrust for the aircraft was chosen in this case due to the aircraft's dimensions.It includes ESC and VEC which allows control via a microcontroller and voltage regulation from the LiPo battery.;1;39,52;39,52;https://es.aliexpress.com/item/1005010323659583.html;47,03
 AERONAUT CAM CARBON LIGHT 11/5 CLOCKWISE CW Popeller;Light carbon propeller designed to generate the maximum amount of thrust efficiently;1;6,9;6,9;Lindinger;8,21
 20pcs/lot nylon and tin-plated hinge board 12x24mm;Nylon hinges that allow free and controlled movement of the control surfaces;2;0,99;1,98;Aliexpress;2,36
 LiPo Battery 3S 11.1V 2200mAh XT60;High-performance lithium polymer battery allowing sufficient voltage and current to be delivered to the motor thanks to its high discharge rate;1;19,57;19,57;Aliexpress;23,29
