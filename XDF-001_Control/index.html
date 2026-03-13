@@ -15,6 +15,8 @@
     />
   </head>
   <body>
+    <!-- Toast Notification Container -->
+    <div id="toast-container"></div>
     <header>
       <div class="top-bar">
         <div class="status-left">
@@ -40,6 +42,10 @@
         </button>
         <button class="tab-btn" data-target="commands-view">Mission</button>
         <div class="spacer"></div>
+          <div class="serial-status-indicator" id="serial-status-pill" title="Serial Status">
+            <span class="icon" style="font-size:14px;">usb</span>
+            <span id="serial-status-text">Disconnected</span>
+          </div>
         <div class="device-selectors">
           <button class="icon-btn" id="open-config" title="Settings">
             <span class="icon">settings</span>
@@ -139,6 +145,70 @@
           </div>
         </section>
 
+        <!-- Statistics Row -->
+        <section class="stats-row" id="stats-section">
+          <div class="card stats-card">
+            <div class="card-header">
+              <div class="title-group">
+                <span class="icon">analytics</span> Statistics
+              </div>
+              <button class="icon-btn" id="toggle-stats" title="Toggle Statistics">
+                <span class="icon">expand_less</span>
+              </button>
+            </div>
+            <div class="stats-grid" id="stats-grid">
+              <div class="stat-item">
+                <span class="stat-label">Alt Min</span>
+                <span class="stat-value" id="stat-alt-min">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Alt Max</span>
+                <span class="stat-value" id="stat-alt-max">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Alt Avg</span>
+                <span class="stat-value" id="stat-alt-avg">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Spd Min</span>
+                <span class="stat-value" id="stat-spd-min">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Spd Max</span>
+                <span class="stat-value" id="stat-spd-max">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Spd Avg</span>
+                <span class="stat-value" id="stat-spd-avg">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">G Min</span>
+                <span class="stat-value" id="stat-g-min">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">G Max</span>
+                <span class="stat-value" id="stat-g-max">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">G Avg</span>
+                <span class="stat-value" id="stat-g-avg">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Packets</span>
+                <span class="stat-value" id="health-packets">0</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">CRC Err</span>
+                <span class="stat-value" id="health-crc-errors">0</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Points</span>
+                <span class="stat-value" id="health-data-points">0</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="side-panel">
           <div class="card position-card">
             <div class="card-header">
@@ -156,6 +226,20 @@
               <button id="center-telemetry" class="map-overlay-btn" title="Center View">
                 <span class="icon">my_location</span>
               </button>
+              <div class="map-layer-switcher" id="telemetry-layer-switcher">
+                <button class="map-layer-btn active" data-layer="dark" title="Dark">
+                  <span class="icon" style="font-size:16px;">dark_mode</span>
+                </button>
+                <button class="map-layer-btn" data-layer="satellite" title="Satellite">
+                  <span class="icon" style="font-size:16px;">satellite</span>
+                </button>
+                <button class="map-layer-btn" data-layer="terrain" title="Terrain">
+                  <span class="icon" style="font-size:16px;">terrain</span>
+                </button>
+                <button class="map-layer-btn" data-layer="streets" title="Streets">
+                  <span class="icon" style="font-size:16px;">map</span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -203,25 +287,6 @@
             </div>
           </div>
 
-          <div class="card alerts-card">
-            <div class="card-header">
-              <span class="icon">warning</span> Alerts/Critical Info
-            </div>
-            <div class="alerts-content">
-              <div class="alert-list">
-                <h3>Alerts</h3>
-                <ul id="alerts">
-                  <li>Low Altitude</li>
-                  <li>Low Battery</li>
-                </ul>
-              </div>
-              <div class="critical-info">
-                <h3>Critical Info</h3>
-                <p>Latency: <span id="latency">0 ms</span></p>
-                <p>Current Command: <span id="command">Manual Control</span></p>
-              </div>
-            </div>
-          </div>
         </section>
       </main>
 
@@ -314,9 +379,12 @@
                 </div>
               </div>
 
-              <div class="btn-center">
+              <div class="btn-center" style="gap: 0.5rem;">
                 <button id="send-command-btn" class="primary-btn">
                   Send
+                </button>
+                <button id="sim-trajectory-btn" class="secondary-btn" title="Preview trajectory on map">
+                  <span class="icon" style="font-size:16px; vertical-align:middle;">route</span> Preview
                 </button>
               </div>
             </div>
@@ -341,6 +409,20 @@
               <button id="center-mission" class="map-overlay-btn" title="Center View">
                 <span class="icon">my_location</span>
               </button>
+              <div class="map-layer-switcher" id="mission-layer-switcher">
+                <button class="map-layer-btn active" data-layer="dark" title="Dark">
+                  <span class="icon" style="font-size:16px;">dark_mode</span>
+                </button>
+                <button class="map-layer-btn" data-layer="satellite" title="Satellite">
+                  <span class="icon" style="font-size:16px;">satellite</span>
+                </button>
+                <button class="map-layer-btn" data-layer="terrain" title="Terrain">
+                  <span class="icon" style="font-size:16px;">terrain</span>
+                </button>
+                <button class="map-layer-btn" data-layer="streets" title="Streets">
+                  <span class="icon" style="font-size:16px;">map</span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -349,7 +431,20 @@
         <section class="mission-plan-row">
           <div class="card mission-plan-card">
             <div class="card-header">
-              <span class="icon">route</span> Mission Plan
+              <div class="title-group">
+                <span class="icon">route</span> Mission Plan
+              </div>
+              <div style="display: flex; gap: 0.3rem;">
+                <button id="import-mission-btn" class="icon-btn" title="Import Mission">
+                  <span class="icon" style="font-size:18px;">file_upload</span>
+                </button>
+                <button id="export-mission-btn" class="icon-btn" title="Export Mission">
+                  <span class="icon" style="font-size:18px;">file_download</span>
+                </button>
+                <button id="clear-mission-btn" class="icon-btn" title="Clear All Waypoints" style="color: var(--critical-color);">
+                  <span class="icon" style="font-size:18px;">delete_sweep</span>
+                </button>
+              </div>
             </div>
             <div class="current-waypoint">
               Active Waypoint: <span id="wp-active-idx">1</span>
@@ -380,6 +475,7 @@
           <div class="tabs" style="margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color);">
             <button class="tab-btn active" data-config-target="poi-config">Points of Interest</button>
             <button class="tab-btn" data-config-target="appearance-config">Appearance</button>
+            <button class="tab-btn" data-config-target="language-config">Language</button>
           </div>
 
           <!-- POI Section -->
@@ -435,6 +531,18 @@
                 </div>
                 <span style="font-size: 0.7rem; color: var(--text-secondary);">Currently active logo appears in the top-left header.</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Language Section -->
+          <div id="language-config" class="config-section" style="display: none;">
+            <div class="config-section">
+              <label>Interface Language:</label>
+              <select id="lang-select" class="device-select" style="width: 200px;">
+                <option value="en" selected>English</option>
+                <option value="es">Español</option>
+              </select>
+              <p style="font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.5rem;">Changes will apply immediately to all interface elements.</p>
             </div>
           </div>
         </div>

@@ -4,6 +4,84 @@ const { SerialPort } = require("serialport");
 const { dialog } = require("electron");
 const fs = require("fs");
 
+// =============================================
+// STRUCTURED LOGGING SYSTEM
+// =============================================
+const LOG_FILE = path.join(app.getPath("userData"), "xdf001_log.txt");
+const MAX_LOG_LINES = 5000;
+let _mainWindow = null;
+
+function logMessage(level, message, details = null) {
+  const ts = new Date().toISOString();
+  const entry = `[${ts}] [${level}] ${message}${details ? ' | ' + JSON.stringify(details) : ''}`;
+  console.log(entry);
+  try {
+    fs.appendFileSync(LOG_FILE, entry + '\n');
+    // Trim log file if too large
+    const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n');
+    if (lines.length > MAX_LOG_LINES) {
+      fs.writeFileSync(LOG_FILE, lines.slice(-MAX_LOG_LINES).join('\n'));
+    }
+  } catch (e) { /* ignore log errors */ }
+  // Forward to renderer for toast notifications
+  if (_mainWindow && !_mainWindow.isDestroyed()) {
+    _mainWindow.webContents.send('log-message', { level, message, details, timestamp: ts });
+  }
+}
+
+// =============================================
+// TELEMETRY VALIDATION
+// =============================================
+function validateTelemetry(data) {
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const isFiniteNum = (v) => typeof v === 'number' && isFinite(v);
+
+  if (!data || typeof data !== 'object') return null;
+
+  const validated = { ...data };
+
+  // Validate and clamp ranges
+  if (!isFiniteNum(validated.latitude) || validated.latitude < -90 || validated.latitude > 90) {
+    logMessage('WARN', 'Invalid latitude', { value: validated.latitude });
+    validated.latitude = clamp(validated.latitude || 0, -90, 90);
+  }
+  if (!isFiniteNum(validated.longitude) || validated.longitude < -180 || validated.longitude > 180) {
+    logMessage('WARN', 'Invalid longitude', { value: validated.longitude });
+    validated.longitude = clamp(validated.longitude || 0, -180, 180);
+  }
+  if (!isFiniteNum(validated.altitude)) {
+    validated.altitude = 0;
+  } else {
+    validated.altitude = clamp(validated.altitude, -500, 50000);
+  }
+  if (!isFiniteNum(validated.yaw)) validated.yaw = 0;
+  if (!isFiniteNum(validated.pitch)) validated.pitch = 0;
+  if (!isFiniteNum(validated.gforce)) {
+    validated.gforce = 1.0;
+  } else {
+    validated.gforce = clamp(validated.gforce, -20, 20);
+  }
+  if (!isFiniteNum(validated.velocity_mag)) {
+    validated.velocity_mag = 0;
+  } else {
+    validated.velocity_mag = clamp(validated.velocity_mag, 0, 500);
+  }
+  if (!isFiniteNum(validated.cmd_throttle)) validated.cmd_throttle = 0;
+
+  // Anomaly flags
+  validated._anomalies = [];
+  if (validated.gforce > 3.0) validated._anomalies.push('HIGH_GFORCE');
+  if (validated.gforce < 0) validated._anomalies.push('NEGATIVE_GFORCE');
+  if (validated.altitude < 0) validated._anomalies.push('NEGATIVE_ALT');
+  if (validated.velocity_mag * 3.6 > 200) validated._anomalies.push('HIGH_SPEED');
+  if (validated.altitude > 5000) validated._anomalies.push('EXTREME_ALT');
+
+  return validated;
+}
+
+// =============================================
+// WINDOW CREATION
+// =============================================
 function createWindow() {
   const win = new BrowserWindow({
     width: 1920,
@@ -14,11 +92,14 @@ function createWindow() {
       nodeIntegration: false,
     },
     backgroundColor: "#000000",
-    icon: path.join(__dirname, "assets/icon.ico"), // Fallback if no icon
+    icon: path.join(__dirname, "assets/icon.ico"),
   });
 
+  _mainWindow = win;
   win.loadFile("index.html");
   // win.webContents.openDevTools(); // Uncomment for debugging
+
+  logMessage('INFO', 'Application window created');
 
   // For Demo: Start simulator automatically
   startSimulator(win.webContents);
@@ -55,96 +136,169 @@ function calculateCRC16(buffer, start, length) {
   return crc;
 }
 
-// Serial Port Logic
+// =============================================
+// SERIAL PORT WITH AUTO-RETRY
+// =============================================
 let port;
 let serialBuffer = Buffer.alloc(0);
+let _serialConfig = { path: null, baudRate: 115200 };
+let _retryCount = 0;
+const MAX_RETRIES = 5;
+let _retryTimer = null;
+let _packetStats = { received: 0, valid: 0, crcErrors: 0, validationErrors: 0 };
+
+function resetPacketStats() {
+  _packetStats = { received: 0, valid: 0, crcErrors: 0, validationErrors: 0 };
+}
+
+function notifySerialStatus(status, details = {}) {
+  if (_mainWindow && !_mainWindow.isDestroyed()) {
+    _mainWindow.webContents.send('serial-status', { status, ...details });
+  }
+}
+
+function attemptReconnect() {
+  if (_retryCount >= MAX_RETRIES) {
+    logMessage('ERROR', `Serial reconnection failed after ${MAX_RETRIES} attempts`);
+    notifySerialStatus('failed', { retries: _retryCount });
+    _retryCount = 0;
+    return;
+  }
+
+  _retryCount++;
+  const delay = Math.min(1000 * Math.pow(2, _retryCount - 1), 10000); // Exponential backoff max 10s
+  logMessage('INFO', `Attempting serial reconnect in ${delay}ms (attempt ${_retryCount}/${MAX_RETRIES})`);
+  notifySerialStatus('reconnecting', { attempt: _retryCount, maxRetries: MAX_RETRIES, delayMs: delay });
+
+  _retryTimer = setTimeout(async () => {
+    try {
+      await connectSerialInternal(_serialConfig.path, _serialConfig.baudRate);
+      _retryCount = 0;
+      logMessage('INFO', 'Serial reconnection successful');
+      notifySerialStatus('connected', { port: _serialConfig.path });
+    } catch (e) {
+      logMessage('WARN', 'Reconnection attempt failed', { error: e.message });
+      attemptReconnect();
+    }
+  }, delay);
+}
+
+async function connectSerialInternal(portPath, baudRate) {
+  if (port && port.isOpen) {
+    await new Promise((resolve) => port.close(resolve));
+  }
+
+  serialBuffer = Buffer.alloc(0);
+  resetPacketStats();
+  const rate = parseInt(baudRate) || 115200;
+  port = new SerialPort({ path: portPath, baudRate: rate });
+  _serialConfig = { path: portPath, baudRate: rate };
+  logMessage('INFO', `Serial Port connected: ${portPath} @ ${rate}bps`);
+
+  port.on("data", (chunk) => {
+    serialBuffer = Buffer.concat([serialBuffer, chunk]);
+
+    // Max buffer protection (2KB)
+    if (serialBuffer.length > 2048) {
+      serialBuffer = Buffer.alloc(0);
+      logMessage('WARN', 'Serial buffer overflow, cleared');
+    }
+
+    // Process all complete packets in buffer
+    while (serialBuffer.length >= 4) {
+      const startIdx = serialBuffer.indexOf(0xAA);
+      if (startIdx === -1) {
+        serialBuffer = Buffer.alloc(0);
+        break;
+      } else if (startIdx > 0) {
+        serialBuffer = serialBuffer.subarray(startIdx);
+      }
+
+      if (serialBuffer.length < 4) break;
+
+      const type = serialBuffer[1];
+      const len = serialBuffer[2];
+      const expectedSize = 1 + 1 + 1 + len + 2 + 1;
+
+      if (serialBuffer.length < expectedSize) break;
+
+      if (serialBuffer[expectedSize - 1] !== 0x55) {
+        serialBuffer = serialBuffer.subarray(1);
+        continue;
+      }
+
+      _packetStats.received++;
+
+      const crcHigh = serialBuffer[expectedSize - 3];
+      const crcLow = serialBuffer[expectedSize - 2];
+      const receivedCRC = (crcHigh << 8) | crcLow;
+      const calculatedCRC = calculateCRC16(serialBuffer, 1, 1 + 1 + len);
+
+      if (receivedCRC === calculatedCRC) {
+        if (type === 0x02 && len === 49) {
+          const offset = 3;
+          const telemetryData = {
+            latitude: serialBuffer.readFloatLE(offset),
+            longitude: serialBuffer.readFloatLE(offset + 4),
+            altitude: serialBuffer.readFloatLE(offset + 8),
+            yaw: serialBuffer.readFloatLE(offset + 12),
+            pitch: serialBuffer.readFloatLE(offset + 16),
+            gforce: serialBuffer.readFloatLE(offset + 20),
+            velocity_mag: serialBuffer.readFloatLE(offset + 24),
+            pos_local_x: serialBuffer.readFloatLE(offset + 28),
+            pos_local_y: serialBuffer.readFloatLE(offset + 32),
+            pos_local_z: serialBuffer.readFloatLE(offset + 36),
+            currentMode: serialBuffer.readUInt8(offset + 40),
+            cmd_yaw: serialBuffer.readInt16LE(offset + 41),
+            cmd_throttle: serialBuffer.readInt16LE(offset + 43),
+            cmd_pitch: serialBuffer.readInt16LE(offset + 45),
+            cmd_roll: serialBuffer.readInt16LE(offset + 47)
+          };
+
+          // Validate before sending to renderer
+          const validated = validateTelemetry(telemetryData);
+          if (validated) {
+            _packetStats.valid++;
+            if (!_mainWindow.webContents.isDestroyed()) {
+              _mainWindow.webContents.send("telemetry-data", validated);
+            }
+          } else {
+            _packetStats.validationErrors++;
+          }
+        }
+        serialBuffer = serialBuffer.subarray(expectedSize);
+      } else {
+        _packetStats.crcErrors++;
+        logMessage('WARN', `CRC Mismatch: Calc ${calculatedCRC.toString(16)}, Recv ${receivedCRC.toString(16)}`);
+        serialBuffer = serialBuffer.subarray(expectedSize);
+      }
+    }
+  });
+
+  // Graceful disconnection handling
+  port.on('close', () => {
+    logMessage('WARN', 'Serial port closed');
+    notifySerialStatus('disconnected');
+    attemptReconnect();
+  });
+
+  port.on('error', (err) => {
+    logMessage('ERROR', 'Serial port error', { error: err.message });
+    notifySerialStatus('error', { error: err.message });
+  });
+
+  return { success: true };
+}
 
 ipcMain.handle("connect-serial", async (event, portPath, baudRate) => {
   try {
-    if (port && port.isOpen) {
-      await new Promise((resolve) => port.close(resolve));
-    }
-
-    serialBuffer = Buffer.alloc(0); // Reset buffer on new connection
-    const rate = parseInt(baudRate) || 115200;
-    port = new SerialPort({ path: portPath, baudRate: rate });
-    console.log(`Serial Port connected: ${portPath} @ ${rate}bps`);
-
-    port.on("data", (chunk) => {
-      serialBuffer = Buffer.concat([serialBuffer, chunk]);
-
-      // Max buffer protection
-      if (serialBuffer.length > 2048) {
-          serialBuffer = Buffer.alloc(0);
-      }
-
-      // Process all complete packets in buffer
-      while (serialBuffer.length >= 4) {
-        // Find MAGIC_START
-        const startIdx = serialBuffer.indexOf(0xAA);
-        if (startIdx === -1) {
-          serialBuffer = Buffer.alloc(0); // Garbage, clear all
-          break;
-        } else if (startIdx > 0) {
-          serialBuffer = serialBuffer.subarray(startIdx); // Shift buffer
-        }
-
-        if (serialBuffer.length < 4) break; // Need at least header
-
-        const type = serialBuffer[1];
-        const len = serialBuffer[2];
-        const expectedSize = 1 + 1 + 1 + len + 2 + 1; // START + TYPE + LEN + PAYLOAD + CRC + END
-
-        if (serialBuffer.length < expectedSize) break; // Wait for more data
-
-        // Check MAGIC_END
-        if (serialBuffer[expectedSize - 1] !== 0x55) {
-            serialBuffer = serialBuffer.subarray(1); // Invalid end, skip the start byte and search again
-            continue; 
-        }
-
-        // Verify CRC over TYPE + LENGTH + PAYLOAD
-        const crcHigh = serialBuffer[expectedSize - 3];
-        const crcLow = serialBuffer[expectedSize - 2];
-        const receivedCRC = (crcHigh << 8) | crcLow;
-        const calculatedCRC = calculateCRC16(serialBuffer, 1, 1 + 1 + len);
-
-        if (receivedCRC === calculatedCRC) {
-            // Valid Packet
-            if (type === 0x02 && len === 49) {
-                // Telemetry Packet
-                const offset = 3;
-                const telemetryData = {
-                    latitude: serialBuffer.readFloatLE(offset),
-                    longitude: serialBuffer.readFloatLE(offset + 4),
-                    altitude: serialBuffer.readFloatLE(offset + 8),
-                    yaw: serialBuffer.readFloatLE(offset + 12),
-                    pitch: serialBuffer.readFloatLE(offset + 16),
-                    gforce: serialBuffer.readFloatLE(offset + 20),
-                    velocity_mag: serialBuffer.readFloatLE(offset + 24),
-                    pos_local_x: serialBuffer.readFloatLE(offset + 28),
-                    pos_local_y: serialBuffer.readFloatLE(offset + 32),
-                    pos_local_z: serialBuffer.readFloatLE(offset + 36),
-                    currentMode: serialBuffer.readUInt8(offset + 40),
-                    cmd_yaw: serialBuffer.readInt16LE(offset + 41),
-                    cmd_throttle: serialBuffer.readInt16LE(offset + 43),
-                    cmd_pitch: serialBuffer.readInt16LE(offset + 45),
-                    cmd_roll: serialBuffer.readInt16LE(offset + 47)
-                };
-                event.sender.send("telemetry-data", telemetryData);
-            }
-            // Remove processed packet
-            serialBuffer = serialBuffer.subarray(expectedSize);
-        } else {
-            // CRC Mismatch
-            console.warn(`CRC Mismatch: Calculated ${calculatedCRC.toString(16)}, Received ${receivedCRC.toString(16)}`);
-            serialBuffer = serialBuffer.subarray(expectedSize);
-        }
-      }
-    });
-
-    return { success: true };
+    if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
+    _retryCount = 0;
+    const result = await connectSerialInternal(portPath, baudRate);
+    notifySerialStatus('connected', { port: portPath });
+    return result;
   } catch (error) {
+    logMessage('ERROR', 'Serial connection failed', { error: error.message });
     return { success: false, error: error.message };
   }
 });
@@ -154,6 +308,7 @@ ipcMain.handle("list-ports", async () => {
     const ports = await SerialPort.list();
     return ports;
   } catch (error) {
+    logMessage('ERROR', 'Failed to list ports', { error: error.message });
     return [];
   }
 });
@@ -170,22 +325,62 @@ ipcMain.handle("select-save-path", async () => {
 ipcMain.handle("save-csv-file", async (event, filePath, content) => {
   try {
     fs.writeFileSync(filePath, content, "utf8");
+    logMessage('INFO', 'CSV file exported', { path: filePath });
     return { success: true };
   } catch (error) {
+    logMessage('ERROR', 'CSV export failed', { error: error.message });
     return { success: false, error: error.message };
   }
 });
 
+// =============================================
+// MISSION FILE IMPORT/EXPORT
+// =============================================
+ipcMain.handle("export-mission", async (event, missionData) => {
+  try {
+    const { filePath } = await dialog.showSaveDialog({
+      title: "Export Mission Plan",
+      defaultPath: path.join(app.getPath("documents"), "mission.json"),
+      filters: [{ name: "Mission Files", extensions: ["json"] }],
+    });
+    if (!filePath) return { success: false, error: 'Cancelled' };
+    fs.writeFileSync(filePath, JSON.stringify(missionData, null, 2), "utf8");
+    logMessage('INFO', 'Mission exported', { path: filePath, waypoints: missionData.length });
+    return { success: true, path: filePath };
+  } catch (error) {
+    logMessage('ERROR', 'Mission export failed', { error: error.message });
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle("import-mission", async () => {
+  try {
+    const { filePaths } = await dialog.showOpenDialog({
+      title: "Import Mission Plan",
+      filters: [{ name: "Mission Files", extensions: ["json"] }],
+      properties: ["openFile"],
+    });
+    if (!filePaths || filePaths.length === 0) return { success: false, error: 'Cancelled' };
+    const content = fs.readFileSync(filePaths[0], "utf8");
+    const data = JSON.parse(content);
+    if (!Array.isArray(data)) throw new Error('Invalid mission file format');
+    logMessage('INFO', 'Mission imported', { path: filePaths[0], waypoints: data.length });
+    return { success: true, data };
+  } catch (error) {
+    logMessage('ERROR', 'Mission import failed', { error: error.message });
+    return { success: false, error: error.message };
+  }
+});
+
+// =============================================
+// PACKET STATS
+// =============================================
+ipcMain.handle("get-packet-stats", async () => {
+  return _packetStats;
+});
+
 // ═══════════════════════════════════════════════════════
 // TX: send-command  (PC → CADI_G via serial)
-// ConfigPacket layout (19 bytes, __packed__):
-//   [0]    masterMode  uint8   0=Discretion 1=Manual 2=Autonomous
-//   [1]    order       uint8   0=None 1=Waypoint 2=Orbit
-//   [2-5]  lat         float32 LE
-//   [6-9]  lon         float32 LE
-//  [10-13] alt         float32 LE
-//  [14]    direction   uint8   0=CCW 1=CW
-//  [15-18] radius      float32 LE  (orbit radius, metres)
 // ═══════════════════════════════════════════════════════
 const PKT_CONFIG  = 0x01;
 const MAGIC_START = 0xAA;
@@ -197,17 +392,20 @@ ipcMain.handle("send-command", async (event, cfg) => {
   }
 
   try {
-    // Build 19-byte payload
+    // Validate command inputs
+    if (typeof cfg.lat !== 'number' || typeof cfg.lon !== 'number') {
+      return { success: false, error: "Invalid coordinates" };
+    }
+
     const payload = Buffer.alloc(19);
-    payload.writeUInt8(cfg.masterMode,  0);  // 0=Discretion 1=Manual 2=Autonomous
-    payload.writeUInt8(cfg.order,       1);  // 0=None 1=Waypoint 2=Orbit
+    payload.writeUInt8(cfg.masterMode,  0);
+    payload.writeUInt8(cfg.order,       1);
     payload.writeFloatLE(cfg.lat,       2);
     payload.writeFloatLE(cfg.lon,       6);
     payload.writeFloatLE(cfg.alt,      10);
-    payload.writeUInt8(cfg.direction,  14);  // 0=CCW 1=CW
-    payload.writeFloatLE(cfg.radius,   15);  // orbit radius (metres)
+    payload.writeUInt8(cfg.direction,  14);
+    payload.writeFloatLE(cfg.radius,   15);
 
-    // Frame: [START][TYPE][LEN][PAYLOAD...][CRC_H][CRC_L][END]
     const len = payload.length;
     const packet = Buffer.alloc(1 + 1 + 1 + len + 2 + 1);
     let idx = 0;
@@ -216,7 +414,6 @@ ipcMain.handle("send-command", async (event, cfg) => {
     packet[idx++] = len;
     payload.copy(packet, idx); idx += len;
 
-    // CRC16 over TYPE + LEN + PAYLOAD
     const crc = calculateCRC16(packet, 1, 1 + 1 + len);
     packet[idx++] = (crc >> 8) & 0xFF;
     packet[idx++] =  crc       & 0xFF;
@@ -226,14 +423,17 @@ ipcMain.handle("send-command", async (event, cfg) => {
       port.write(packet, (err) => { err ? reject(err) : resolve(); });
     });
 
+    logMessage('INFO', 'Command sent', { mode: cfg.masterMode, order: cfg.order });
     return { success: true };
   } catch (error) {
+    logMessage('ERROR', 'Send command failed', { error: error.message });
     return { success: false, error: error.message };
   }
 });
 
-// Position-only Simulator (kept for map trail and waypoint testing)
-// All values are fixed except lat/lon which drift slowly to simulate flight
+// =============================================
+// SIMULATOR
+// =============================================
 let _simLat = -33.456;
 let _simLon = -70.648;
 function startSimulator(webContents) {
@@ -243,14 +443,15 @@ function startSimulator(webContents) {
     const simData = {
         latitude:     _simLat,
         longitude:    _simLon,
-        altitude:     120,
+        altitude:     120 + (Math.random() - 0.5) * 10,
         currentMode:  1,
-        gforce:       1.05,
-        velocity_mag: 22,
-        pitch:        -8,
-        yaw:          45,
+        gforce:       1.0 + (Math.random() - 0.5) * 0.3,
+        velocity_mag: 22 + (Math.random() - 0.5) * 5,
+        pitch:        -8 + (Math.random() - 0.5) * 4,
+        yaw:          45 + (Math.random() - 0.5) * 10,
         pos_local_x: 0, pos_local_y: 0, pos_local_z: 0,
-        cmd_yaw: 0, cmd_throttle: 90, cmd_pitch: -8, cmd_roll: 0
+        cmd_yaw: 0, cmd_throttle: 90, cmd_pitch: -8, cmd_roll: 0,
+        _anomalies: []
     };
     if (!webContents.isDestroyed()) {
       webContents.send("telemetry-data", simData);

@@ -1,6 +1,225 @@
 // Session tracking
 const appStartTime = Date.now();
 const telemetryLog = []; // Stores all received data points
+const MAX_TELEMETRY_LOG = 10000; // Memory protection
+
+// =============================================
+// TOAST NOTIFICATION SYSTEM
+// =============================================
+const toastContainer = document.getElementById('toast-container');
+function showToast(message, type = 'info', duration = 4000) {
+    const icons = { success: 'check_circle', warning: 'warning', error: 'error', info: 'info' };
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <span class="icon toast-icon">${icons[type] || 'info'}</span>
+        <span>${message}</span>
+        <button class="toast-close" onclick="this.parentElement.classList.add('toast-exit'); setTimeout(() => this.parentElement.remove(), 300);">×</button>
+    `;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        if (toast.parentElement) {
+            toast.classList.add('toast-exit');
+            setTimeout(() => toast.remove(), 300);
+        }
+    }, duration);
+}
+
+// =============================================
+// I18N SYSTEM
+// =============================================
+const i18n = {
+    en: {
+        telemetry: 'Telemetry', mission: 'Mission', altitude: 'Altitude', speed: 'Speed',
+        power: 'Power', gforce: 'G-Force', orientation: 'Orientation', position: 'Position',
+        realtimeGraph: 'Real-time Graph', camera: 'Camera', alerts: 'Alerts/Critical Info',
+        alertsTitle: 'Alerts', criticalInfo: 'Critical Info', latency: 'Latency',
+        currentCommand: 'Current Command', manualControl: 'Manual Control',
+        statistics: 'Statistics', health: 'Health', packets: 'Packets',
+        crcErrors: 'CRC Errors', dataPoints: 'Data Points',
+        missionControl: 'Mission Control', activeOrder: 'Active Order',
+        issueNewOrder: 'Issue New Order', advance: 'Advance', orbit: 'Orbit',
+        targetAltitude: 'Target Altitude', targetLat: 'Target Lat', targetLon: 'Target Lon',
+        orbitRadius: 'Orbit Radius', direction: 'Direction', send: 'Send', preview: 'Preview',
+        missionPlan: 'Mission Plan', activeWaypoint: 'Active Waypoint',
+        noWaypoints: 'No waypoints registered. Use the map to add them.',
+        selectTelemetryPort: 'Select Telemetry Port', selectCamera: 'Select Camera',
+        droneStatus: 'Drone Status', disconnected: 'Disconnected', connected: 'Connected',
+        reconnecting: 'Reconnecting...', offline: 'OFFLINE',
+        noSignal: 'No telemetry signal received from drone',
+        lowAltitude: 'Low Altitude', lowBattery: 'Low Battery',
+        exportSuccess: 'Data exported successfully!', exportError: 'Error exporting data',
+        selectPath: 'Please select a save path first.',
+        selectDestination: 'Please select a destination point on the map first.',
+        selectMode: 'Please select a mode (Advance, Orbit, Manual).',
+        sent: '✓ Sent', txError: '✗ TX Error', deletePoi: 'Delete this POI?',
+        invalidCoords: 'Enter valid Lat/Lon coordinates for the POI.',
+        missionExported: 'Mission exported successfully!',
+        missionImported: 'Mission imported!', missionCleared: 'All waypoints cleared.',
+        noWaypointsExport: 'No waypoints to export.',
+        confirmClear: 'Clear all waypoints?',
+        highGforce: '⚠ High G-Force detected!', negativeAlt: '⚠ Negative altitude!',
+        highSpeed: '⚠ Excessive speed!', extremeAlt: '⚠ Extreme altitude!',
+    },
+    es: {
+        telemetry: 'Telemetría', mission: 'Misión', altitude: 'Altitud', speed: 'Velocidad',
+        power: 'Potencia', gforce: 'Fuerza G', orientation: 'Orientación', position: 'Posición',
+        realtimeGraph: 'Gráfico en Tiempo Real', camera: 'Cámara', alerts: 'Alertas/Info Crítica',
+        alertsTitle: 'Alertas', criticalInfo: 'Info Crítica', latency: 'Latencia',
+        currentCommand: 'Comando Actual', manualControl: 'Control Manual',
+        statistics: 'Estadísticas', health: 'Salud', packets: 'Paquetes',
+        crcErrors: 'Errores CRC', dataPoints: 'Puntos de Datos',
+        missionControl: 'Control de Misión', activeOrder: 'Orden Activa',
+        issueNewOrder: 'Nueva Orden', advance: 'Avanzar', orbit: 'Orbitar',
+        targetAltitude: 'Altitud Objetivo', targetLat: 'Lat Objetivo', targetLon: 'Lon Objetivo',
+        orbitRadius: 'Radio de Órbita', direction: 'Dirección', send: 'Enviar', preview: 'Vista Previa',
+        missionPlan: 'Plan de Misión', activeWaypoint: 'Waypoint Activo',
+        noWaypoints: 'Sin waypoints registrados. Use el mapa para agregar.',
+        selectTelemetryPort: 'Seleccionar Puerto', selectCamera: 'Seleccionar Cámara',
+        droneStatus: 'Estado del Dron', disconnected: 'Desconectado', connected: 'Conectado',
+        reconnecting: 'Reconectando...', offline: 'FUERA DE LÍNEA',
+        noSignal: 'Sin señal de telemetría del dron',
+        lowAltitude: 'Altitud Baja', lowBattery: 'Batería Baja',
+        exportSuccess: '¡Datos exportados exitosamente!', exportError: 'Error al exportar datos',
+        selectPath: 'Seleccione una ruta de guardado primero.',
+        selectDestination: 'Seleccione un punto destino en el mapa primero.',
+        selectMode: 'Seleccione un modo (Avanzar, Orbitar, Manual).',
+        sent: '✓ Enviado', txError: '✗ Error TX', deletePoi: '¿Eliminar este POI?',
+        invalidCoords: 'Ingrese coordenadas Lat/Lon válidas.',
+        missionExported: '¡Misión exportada exitosamente!',
+        missionImported: '¡Misión importada!', missionCleared: 'Todos los waypoints eliminados.',
+        noWaypointsExport: 'No hay waypoints para exportar.',
+        confirmClear: '¿Eliminar todos los waypoints?',
+        highGforce: '⚠ ¡Alta Fuerza G detectada!', negativeAlt: '⚠ ¡Altitud negativa!',
+        highSpeed: '⚠ ¡Velocidad excesiva!', extremeAlt: '⚠ ¡Altitud extrema!',
+    }
+};
+
+let currentLang = localStorage.getItem('cadi_lang') || 'en';
+function t(key) { return (i18n[currentLang] && i18n[currentLang][key]) || i18n.en[key] || key; }
+
+function applyLanguage(lang) {
+    currentLang = lang;
+    localStorage.setItem('cadi_lang', lang);
+    // Update static UI text
+    document.querySelector('.tab-btn[data-target="telemetry-view"]').textContent = t('telemetry');
+    document.querySelector('.tab-btn[data-target="commands-view"]').textContent = t('mission');
+    document.querySelector('#drone-state-indicator').textContent = t('droneStatus');
+}
+
+// =============================================
+// STATISTICS TRACKER
+// =============================================
+const statsTracker = {
+    alt: { min: Infinity, max: -Infinity, sum: 0, count: 0 },
+    spd: { min: Infinity, max: -Infinity, sum: 0, count: 0 },
+    g:   { min: Infinity, max: -Infinity, sum: 0, count: 0 },
+    update(alt, spd, g) {
+        this._track(this.alt, alt);
+        this._track(this.spd, spd);
+        this._track(this.g, g);
+        if (this.alt.count % 5 === 0) this.render(); // render every 5th update
+    },
+    _track(obj, val) {
+        if (val < obj.min) obj.min = val;
+        if (val > obj.max) obj.max = val;
+        obj.sum += val;
+        obj.count++;
+    },
+    render() {
+        const fmt = (v) => isFinite(v) ? v.toFixed(1) : '--';
+        const avg = (o) => o.count > 0 ? o.sum / o.count : 0;
+        document.getElementById('stat-alt-min').textContent = fmt(this.alt.min);
+        document.getElementById('stat-alt-max').textContent = fmt(this.alt.max);
+        document.getElementById('stat-alt-avg').textContent = fmt(avg(this.alt));
+        document.getElementById('stat-spd-min').textContent = fmt(this.spd.min);
+        document.getElementById('stat-spd-max').textContent = fmt(this.spd.max);
+        document.getElementById('stat-spd-avg').textContent = fmt(avg(this.spd));
+        document.getElementById('stat-g-min').textContent = fmt(this.g.min);
+        document.getElementById('stat-g-max').textContent = fmt(this.g.max);
+        document.getElementById('stat-g-avg').textContent = fmt(avg(this.g));
+    }
+};
+
+// Stats collapsible toggle
+document.getElementById('toggle-stats')?.addEventListener('click', () => {
+    const grid = document.getElementById('stats-grid');
+    const icon = document.querySelector('#toggle-stats .icon');
+    grid.classList.toggle('collapsed');
+    icon.textContent = grid.classList.contains('collapsed') ? 'expand_more' : 'expand_less';
+});
+
+// =============================================
+// MAP TILE LAYERS
+// =============================================
+const tileLayers = {
+    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    terrain: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    streets: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+};
+
+function switchMapLayer(mapInstance, layerKey, buttonContainer) {
+    // Remove current tile layer
+    mapInstance.eachLayer(layer => { if (layer instanceof L.TileLayer) mapInstance.removeLayer(layer); });
+    L.tileLayer(tileLayers[layerKey] || tileLayers.dark, { maxZoom: 19 }).addTo(mapInstance);
+    // Update button states
+    buttonContainer.querySelectorAll('.map-layer-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.layer === layerKey);
+    });
+    localStorage.setItem('cadi_map_layer', layerKey);
+}
+
+// =============================================
+// USER PREFERENCES
+// =============================================
+function loadPreferences() {
+    const lang = localStorage.getItem('cadi_lang') || 'en';
+    const langSelect = document.getElementById('lang-select');
+    if (langSelect) langSelect.value = lang;
+    applyLanguage(lang);
+}
+
+// Language selector
+document.getElementById('lang-select')?.addEventListener('change', (e) => {
+    applyLanguage(e.target.value);
+    showToast(currentLang === 'es' ? 'Idioma cambiado a Español' : 'Language changed to English', 'success');
+});
+
+// =============================================
+// SERIAL STATUS LISTENER
+// =============================================
+if (window.electronAPI.onSerialStatus) {
+    window.electronAPI.onSerialStatus((status) => {
+        const pill = document.getElementById('serial-status-pill');
+        const text = document.getElementById('serial-status-text');
+        pill.className = 'serial-status-indicator';
+        if (status.status === 'connected') {
+            pill.classList.add('connected');
+            text.textContent = t('connected');
+            showToast(`Serial ${t('connected')}: ${status.port || ''}`, 'success');
+        } else if (status.status === 'disconnected') {
+            text.textContent = t('disconnected');
+            showToast(`Serial ${t('disconnected')}`, 'warning');
+        } else if (status.status === 'reconnecting') {
+            pill.classList.add('reconnecting');
+            text.textContent = `${t('reconnecting')} (${status.attempt}/${status.maxRetries})`;
+        } else if (status.status === 'error') {
+            text.textContent = 'Error';
+            showToast(`Serial Error: ${status.error}`, 'error');
+        } else if (status.status === 'failed') {
+            text.textContent = t('disconnected');
+            showToast('Serial reconnection failed', 'error', 6000);
+        }
+    });
+}
+
+// Log message listener
+if (window.electronAPI.onLogMessage) {
+    window.electronAPI.onLogMessage((log) => {
+        if (log.level === 'ERROR') showToast(log.message, 'error', 6000);
+    });
+}
 
 function formatElapsed(ms) {
     const totalSeconds = Math.floor(ms / 1000);
@@ -230,9 +449,9 @@ portSelect.addEventListener('change', async (e) => {
         const baudRate = document.getElementById('baud-rate-select').value;
         const result = await window.electronAPI.connectSerial(e.target.value, baudRate);
         if (result.success) {
-            console.log('Connected to serial port:', e.target.value, '@', baudRate);
+            showToast(`Connected to ${e.target.value} @ ${baudRate}`, 'success');
         } else {
-            alert('Failed to connect: ' + result.error);
+            showToast('Failed to connect: ' + result.error, 'error');
         }
     }
 });
@@ -342,18 +561,44 @@ window.electronAPI.onTelemetryData((data) => {
     // Dataset 3: G-Force
     telemetryChart.data.datasets[3].data.push(gforce);
 
-    // Update Log for CSV Export
+    // Update Log for CSV Export (with memory limit)
     telemetryLog.push({
         elapsed: formattedTime,
         ms: elapsedMs,
         lat, lon, alt, state, gforce, speed, pitch, roll, yaw, bearing
     });
+    if (telemetryLog.length > MAX_TELEMETRY_LOG) {
+        telemetryLog.splice(0, telemetryLog.length - MAX_TELEMETRY_LOG);
+    }
 
     if (telemetryChart.data.labels.length > 20) {
         telemetryChart.data.labels.shift();
         telemetryChart.data.datasets.forEach(ds => ds.data.shift());
     }
     telemetryChart.update('none');
+
+    // Update Statistics
+    statsTracker.update(alt, speed, gforce);
+
+    // Anomaly Detection
+    // Anomaly Detection
+    if (data._anomalies && data._anomalies.length > 0) {
+        if (!window._lastAnomalyTime) window._lastAnomalyTime = {};
+        const now = Date.now();
+        data._anomalies.forEach(anomaly => {
+            const key = { HIGH_GFORCE: 'highGforce', NEGATIVE_ALT: 'negativeAlt', HIGH_SPEED: 'highSpeed', EXTREME_ALT: 'extremeAlt' }[anomaly];
+            if (key) {
+                // Throttle toasts to once every 5 seconds per anomaly type
+                if (!window._lastAnomalyTime[anomaly] || (now - window._lastAnomalyTime[anomaly] > 5000)) {
+                    window._lastAnomalyTime[anomaly] = now;
+                    showToast(t(key), 'warning', 5000);
+                }
+            }
+        });
+    }
+
+    // Update Health Dashboard
+    document.getElementById('health-data-points').textContent = telemetryLog.length;
 });
 
 // Removed duplicate fake data logic since it is in main.js simulator
@@ -387,7 +632,7 @@ browsePathBtn.addEventListener('click', async () => {
 confirmExportBtn.addEventListener('click', async () => {
     const path = exportPathInput.value;
     if (!path) {
-        alert('Please select a save path first.');
+        showToast(t('selectPath'), 'warning');
         return;
     }
     const selectedStartTime = document.getElementById('export-start').value;
@@ -398,7 +643,7 @@ confirmExportBtn.addEventListener('click', async () => {
         return point.elapsed >= selectedStartTime && (selectedEndTime === "Now" || point.elapsed <= selectedEndTime);
     });
     if (filteredData.length === 0) {
-        alert('No data found for the selected time range.');
+        showToast('No data found for the selected time range.', 'warning');
         return;
     }
     const headers = selectedVars.join(',');
@@ -411,10 +656,10 @@ confirmExportBtn.addEventListener('click', async () => {
     const csvContent = headers + '\n' + rows.join('\n');
     const result = await window.electronAPI.saveCSVFile(path, csvContent);
     if (result.success) {
-        alert('Data exported successfully!');
+        showToast(t('exportSuccess'), 'success');
         exportModal.classList.remove('active');
     } else {
-        alert('Error exporting data: ' + result.error);
+        showToast(t('exportError') + ': ' + result.error, 'error');
     }
 });
 
@@ -428,6 +673,7 @@ const configTabs = configModal.querySelectorAll('.modal-body .tab-btn');
 const configSections = {
     'poi-config': document.getElementById('poi-config'),
     'appearance-config': document.getElementById('appearance-config'),
+    'language-config': document.getElementById('language-config'),
 };
 
 openConfigBtn.addEventListener('click', () => {
@@ -654,12 +900,12 @@ document.getElementById('send-command-btn').addEventListener('click', async () =
     const radius = parseFloat(document.getElementById('cmd-radius')?.value) || 50;
 
     if (isNaN(lat) || isNaN(lon)) {
-        alert('Please select a destination point on the map first.');
+        showToast(t('selectDestination'), 'warning');
         return;
     }
 
     if (selectedMode === null) {
-        alert('Please select a mode (Advance, Orbit, Manual).');
+        showToast(t('selectMode'), 'warning');
         return;
     }
 
@@ -874,7 +1120,7 @@ function renderPois() {
 }
 
 function deletePoi(index) {
-    if (confirm('Delete this POI?')) {
+    if (confirm(t('deletePoi'))) {
         // Remove from maps
         if (poiMapMarkers[index]) map.removeLayer(poiMapMarkers[index]);
         if (poiMissionMarkers[index]) missionMap.removeLayer(poiMissionMarkers[index]);
@@ -924,7 +1170,7 @@ document.getElementById('add-poi-btn').addEventListener('click', () => {
     const customPath = poiCustomInput.value.trim();
 
     if (isNaN(lat) || isNaN(lon)) {
-        alert('Enter valid Lat/Lon coordinates for the POI.');
+        showToast(t('invalidCoords'), 'warning');
         return;
     }
 
@@ -1432,3 +1678,154 @@ function drawHUD(pitch, roll, bearing, alt, speed) {
 // Ensure the canvas is sized correctly later
 setTimeout(resizeHudCanvas, 1000);
 
+// =============================================
+// MAP LAYER SWITCHING
+// =============================================
+document.getElementById('telemetry-layer-switcher')?.querySelectorAll('.map-layer-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        switchMapLayer(map, btn.dataset.layer, document.getElementById('telemetry-layer-switcher'));
+    });
+});
+
+// Mission map layer switching (deferred until map is initialized)
+function setupMissionLayerSwitcher() {
+    document.getElementById('mission-layer-switcher')?.querySelectorAll('.map-layer-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (missionMap) switchMapLayer(missionMap, btn.dataset.layer, document.getElementById('mission-layer-switcher'));
+        });
+    });
+}
+// Called after mission map init in initMissionMap - hook it in
+const _origInitMissionMap = typeof initMissionMap === 'function' ? initMissionMap : null;
+
+// =============================================
+// MISSION IMPORT / EXPORT / CLEAR
+// =============================================
+document.getElementById('export-mission-btn')?.addEventListener('click', async () => {
+    if (waypoints.length === 0) {
+        showToast(t('noWaypointsExport'), 'warning');
+        return;
+    }
+    const result = await window.electronAPI.exportMission(waypoints);
+    if (result.success) showToast(t('missionExported'), 'success');
+});
+
+document.getElementById('import-mission-btn')?.addEventListener('click', async () => {
+    const result = await window.electronAPI.importMission();
+    if (result.success && result.data) {
+        // Clear existing
+        missionWpMarkers.forEach(m => { if (missionMap) missionMap.removeLayer(m); });
+        missionWpMarkers.length = 0;
+        waypoints.length = 0;
+
+        // Load imported
+        result.data.forEach(wp => {
+            waypoints.push(wp);
+            if (missionMap) {
+                const marker = L.marker([wp.lat, wp.lon], { icon: buildWpIcon(wp.mode) })
+                    .bindTooltip(`WP ${waypoints.length} – ${modeNames[wp.mode]}`, { permanent: false, direction: 'top' })
+                    .addTo(missionMap);
+                missionWpMarkers.push(marker);
+            }
+        });
+        activeWaypointIdx = 0;
+        renderWaypoints();
+        showToast(`${t('missionImported')} (${result.data.length} WPs)`, 'success');
+    }
+});
+
+document.getElementById('clear-mission-btn')?.addEventListener('click', () => {
+    if (waypoints.length === 0) return;
+    if (!confirm(t('confirmClear'))) return;
+    missionWpMarkers.forEach(m => { if (missionMap) missionMap.removeLayer(m); });
+    missionWpMarkers.length = 0;
+    waypoints.length = 0;
+    activeWaypointIdx = 0;
+    // Remove trajectory preview
+    if (window._trajectoryLine) {
+        if (missionMap) missionMap.removeLayer(window._trajectoryLine);
+        window._trajectoryLine = null;
+    }
+    renderWaypoints();
+    showToast(t('missionCleared'), 'info');
+});
+
+// =============================================
+// TRAJECTORY PREVIEW
+// =============================================
+let _trajectoryLine = null;
+document.getElementById('sim-trajectory-btn')?.addEventListener('click', () => {
+    if (!missionMap) return;
+    const btn = document.getElementById('sim-trajectory-btn');
+
+    if (_trajectoryLine) {
+        // Toggle off
+        missionMap.removeLayer(_trajectoryLine);
+        _trajectoryLine = null;
+        btn.classList.remove('trajectory-active');
+        return;
+    }
+
+    if (waypoints.length < 1) {
+        showToast(t('noWaypointsExport'), 'warning');
+        return;
+    }
+
+    // Build trajectory path: drone current -> wp1 -> wp2 -> ...
+    const points = [];
+    if (window._lastDroneLat && window._lastDroneLon) {
+        points.push([window._lastDroneLat, window._lastDroneLon]);
+    }
+    waypoints.forEach(wp => points.push([wp.lat, wp.lon]));
+
+    _trajectoryLine = L.polyline(points, {
+        color: '#00e676',
+        weight: 3,
+        opacity: 0.8,
+        dashArray: '10 6',
+    }).addTo(missionMap);
+
+    btn.classList.add('trajectory-active');
+
+    // Add distance labels
+    for (let i = 1; i < points.length; i++) {
+        const dist = calculateDistance(points[i-1][0], points[i-1][1], points[i][0], points[i][1]);
+        const midLat = (points[i-1][0] + points[i][0]) / 2;
+        const midLon = (points[i-1][1] + points[i][1]) / 2;
+        const dText = dist > 1000 ? (dist/1000).toFixed(1) + ' km' : dist.toFixed(0) + ' m';
+        L.tooltip({ permanent: true, direction: 'center', className: '' })
+            .setLatLng([midLat, midLon])
+            .setContent(`<span style="color:#00e676; font-size:11px; text-shadow:0 0 3px #000;">${dText}</span>`)
+            .addTo(missionMap);
+    }
+
+    showToast(`Trajectory preview: ${points.length} points`, 'info');
+    window._trajectoryLine = _trajectoryLine;
+});
+
+// =============================================
+// HEALTH DASHBOARD POLLING
+// =============================================
+setInterval(async () => {
+    if (window.electronAPI.getPacketStats) {
+        try {
+            const stats = await window.electronAPI.getPacketStats();
+            if (stats) {
+                document.getElementById('health-packets').textContent = stats.received || 0;
+                document.getElementById('health-crc-errors').textContent = stats.crcErrors || 0;
+            }
+        } catch (e) { /* ignore */ }
+    }
+}, 5000);
+
+// =============================================
+// INITIAL SETUP
+// =============================================
+loadPreferences();
+setupMissionLayerSwitcher();
+
+// Restore saved map layer
+const savedLayer = localStorage.getItem('cadi_map_layer');
+if (savedLayer && tileLayers[savedLayer]) {
+    switchMapLayer(map, savedLayer, document.getElementById('telemetry-layer-switcher'));
+}
