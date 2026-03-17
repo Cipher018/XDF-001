@@ -17,14 +17,20 @@ function logMessage(level, message, details = null) {
   console.log(entry);
   try {
     fs.appendFileSync(LOG_FILE, entry + '\n');
-    // Trim log file if too large
-    const lines = fs.readFileSync(LOG_FILE, 'utf8').split('\n');
-    if (lines.length > MAX_LOG_LINES) {
-      fs.writeFileSync(LOG_FILE, lines.slice(-MAX_LOG_LINES).join('\n'));
+    // Periodically check size instead of reading every line count
+    if (Math.random() < 0.05) { // 5% chance to check for cleanup to save I/O
+      const stats = fs.statSync(LOG_FILE);
+      if (stats.size > 1024 * 1024) { // > 1MB
+        const data = fs.readFileSync(LOG_FILE, 'utf8').split('\n');
+        if (data.length > MAX_LOG_LINES) {
+          fs.writeFileSync(LOG_FILE, data.slice(-MAX_LOG_LINES).join('\n'));
+        }
+      }
     }
   } catch (e) { /* ignore log errors */ }
-  // Forward to renderer for toast notifications
-  if (_mainWindow && !_mainWindow.isDestroyed()) {
+  
+  // Forward to renderer for toast notifications with safety check
+  if (_mainWindow && !_mainWindow.isDestroyed() && _mainWindow.webContents) {
     _mainWindow.webContents.send('log-message', { level, message, details, timestamp: ts });
   }
 }
@@ -93,9 +99,16 @@ function createWindow() {
     },
     backgroundColor: "#000000",
     icon: path.join(__dirname, "assets/icon.ico"),
+    fullscreen: true,
+  });
+
+  ipcMain.on("toggle-fullscreen", () => {
+    const isFullScreen = win.isFullScreen();
+    win.setFullScreen(!isFullScreen);
   });
 
   _mainWindow = win;
+  win.setMenu(null); 
   win.loadFile("index.html");
   // win.webContents.openDevTools(); // Uncomment for debugging
 
@@ -152,7 +165,7 @@ function resetPacketStats() {
 }
 
 function notifySerialStatus(status, details = {}) {
-  if (_mainWindow && !_mainWindow.isDestroyed()) {
+  if (_mainWindow && !_mainWindow.isDestroyed() && _mainWindow.webContents) {
     _mainWindow.webContents.send('serial-status', { status, ...details });
   }
 }
@@ -259,7 +272,7 @@ async function connectSerialInternal(portPath, baudRate) {
           const validated = validateTelemetry(telemetryData);
           if (validated) {
             _packetStats.valid++;
-            if (!_mainWindow.webContents.isDestroyed()) {
+            if (_mainWindow && !_mainWindow.isDestroyed() && _mainWindow.webContents) {
               _mainWindow.webContents.send("telemetry-data", validated);
             }
           } else {
@@ -438,9 +451,13 @@ let _simLat = -33.456;
 let _simLon = -70.648;
 function startSimulator(webContents) {
   setInterval(() => {
+    // Only simulate if real serial is not sending data
+    if (port && port.isOpen) return;
+
     _simLat += (Math.random() - 0.5) * 0.0004;
     _simLon += (Math.random() - 0.5) * 0.0004;
-    const simData = {
+    
+    const rawSimData = {
         latitude:     _simLat,
         longitude:    _simLon,
         altitude:     120 + (Math.random() - 0.5) * 10,
@@ -450,11 +467,12 @@ function startSimulator(webContents) {
         pitch:        -8 + (Math.random() - 0.5) * 4,
         yaw:          45 + (Math.random() - 0.5) * 10,
         pos_local_x: 0, pos_local_y: 0, pos_local_z: 0,
-        cmd_yaw: 0, cmd_throttle: 90, cmd_pitch: -8, cmd_roll: 0,
-        _anomalies: []
+        cmd_yaw: 0, cmd_throttle: 90, cmd_pitch: -8, cmd_roll: 0
     };
-    if (!webContents.isDestroyed()) {
-      webContents.send("telemetry-data", simData);
+
+    const validated = validateTelemetry(rawSimData);
+    if (validated && webContents && !webContents.isDestroyed()) {
+      webContents.send("telemetry-data", validated);
     }
   }, 1000);
 }

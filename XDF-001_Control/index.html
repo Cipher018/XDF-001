@@ -17,429 +17,419 @@
   <body>
     <!-- Toast Notification Container -->
     <div id="toast-container"></div>
-    <header>
-      <div class="top-bar">
-        <div class="status-left">
-          <!-- Removed Control Status -->
-        </div>
-        <div class="title-section">
-          <h1>C.A.D.I</h1>
-          <p>"The skies are ours to protect"</p>
-        </div>
-        <div class="status-right">
-          <div class="status-item">
-            <span class="icon">settings_remote</span> Drone Connected
-          </div>
-          <div class="status-item">
-            <span class="icon">battery_std</span> 100%
-          </div>
-          <div class="alert-badge">! <span>1</span></div>
-        </div>
+
+    <!-- OFFLINE Game Over Overlay -->
+    <div id="offline-overlay" class="offline-screen hidden">
+      <div class="offline-content">
+        <h1 class="game-over-text">OFFLINE</h1>
+        <p>No telemetry signal received from drone</p>
       </div>
-      <nav class="tabs" aria-label="Main Navigation">
-        <button type="button" class="tab-btn active" data-target="telemetry-view">
-          Telemetry
-        </button>
-        <button type="button" class="tab-btn" data-target="commands-view">Mission</button>
-        <div class="spacer"></div>
-          <div class="serial-status-indicator" id="serial-status-pill" title="Serial Status">
-            <span class="icon icon-small">usb</span>
-            <span id="serial-status-text">Disconnected</span>
+    </div>
+
+    <div class="app-container">
+      <header>
+        <div class="top-bar">
+          <div class="status-left">
+            <!-- Removed Control Status -->
           </div>
-        <div class="device-selectors">
-          <button type="button" class="icon-btn" id="open-config" title="Settings">
-            <span class="icon">settings</span>
-          </button>
-          <button type="button" id="refresh-ports" class="icon-btn" title="Refresh Ports">
-            <span class="icon">refresh</span>
-          </button>
-          <select id="baud-rate-select" class="device-select w-100">
-            <option value="9600">9600</option>
-            <option value="57600">57600</option>
-            <option value="115200" selected>115200</option>
-          </select>
-          <select id="telemetry-port-select" class="device-select">
-            <option value="">Select Telemetry Port</option>
-          </select>
+          <div class="title-section">
+            <h1>C.A.D.I</h1>
+            <p>"The skies are ours to protect"</p>
+          </div>
+          <div class="status-right" id="header-status-area">
+             <div id="offline-header-msg" class="offline-header-text"></div>
+          </div>
         </div>
-        <div class="drone-status" id="drone-state-indicator">
-          Drone Status
-        </div>
+        <nav class="tabs" aria-label="Main Navigation">
+          <button type="button" class="tab-btn active" data-target="telemetry-view">
+            Telemetry
+          </button>
+          <button type="button" class="tab-btn" data-target="commands-view">Mission</button>
+          <div class="spacer"></div>
+            <div class="serial-status-indicator" id="serial-status-pill" title="Serial Status">
+              <span class="icon icon-small">usb</span>
+              <span id="serial-status-text">Disconnected</span>
+            </div>
+          <div class="device-selectors">
+            <button type="button" class="icon-btn" id="open-config" title="Settings">
+              <span class="icon">settings</span>
+            </button>
+            <button type="button" id="refresh-ports" class="icon-btn" title="Refresh Ports">
+              <span class="icon">refresh</span>
+            </button>
+            <select id="baud-rate-select" class="device-select w-100">
+              <option value="9600">9600</option>
+              <option value="57600">57600</option>
+              <option value="115200" selected>115200</option>
+            </select>
+            <select id="telemetry-port-select" class="device-select">
+              <option value="">Select Telemetry Port</option>
+            </select>
+          </div>
+          <div class="drone-status" id="drone-state-indicator">
+            Drone Status
+          </div>
+        </nav>
+      </header>
 
-      </nav>
-    </header>
+      <!-- VIEWS CONTAINER -->
+      <main id="views-container">
+        <!-- TELEMETRY VIEW -->
+        <section class="dashboard" id="telemetry-view" aria-label="Telemetry Dashboard">
+          <section class="telemetry-grid">
+            <div class="card metric-card" id="altitude">
+              <div class="card-header">
+                <span class="icon">arrow_upward</span> Altitude
+              </div>
+              <div class="metric-value">0 <span class="unit">m</span></div>
+            </div>
+            <div class="card metric-card" id="speed">
+              <div class="card-header"><span class="icon">speed</span> Speed</div>
+              <div class="metric-value">0 <span class="unit">Km/h</span></div>
+            </div>
+            <div class="card metric-card" id="power">
+              <div class="card-header"><span class="icon">bolt</span> Power</div>
+              <div class="metric-value">0 <span class="unit">%</span></div>
+            </div>
 
-    <!-- VIEWS CONTAINER -->
-    <main id="views-container">
-      <!-- TELEMETRY VIEW -->
-      <section class="dashboard" id="telemetry-view" aria-label="Telemetry Dashboard">
-        <!-- OFFLINE Banner -->
-        <div
-          id="offline-banner"
-          class="offline-banner-overlay hidden"
-          aria-hidden="true"
+            <div class="card metric-card" id="gforce">
+              <div class="card-header">
+                <span class="icon">line_weight</span> G-Force
+              </div>
+              <div class="metric-value">0 <span class="unit">g</span></div>
+            </div>
+
+            <div class="card orientation-card">
+              <div class="card-header">
+                <span class="icon">explore</span> Orientation
+              </div>
+              <div class="orientation-table">
+                <div><span>Pitch</span> <span id="pitch">0°</span></div>
+                <div><span>Roll</span> <span id="roll">0°</span></div>
+                <div><span>Yaw</span> <span id="yaw">0°</span></div>
+                <div><span>Bearing</span> <span id="bearing">0°</span></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Statistics Row -->
+          <section class="stats-row" id="stats-section">
+            <div class="card stats-card">
+              <div class="card-header">
+                <div class="title-group">
+                  <span class="icon">analytics</span> Statistics &amp; Maximums
+                </div>
+                <button type="button" class="icon-btn" id="toggle-stats" title="Toggle Statistics">
+                  <span class="icon">expand_less</span>
+                </button>
+              </div>
+              <div class="stats-grid" id="stats-grid">
+                <div class="stat-item">
+                  <span class="stat-label">Alt Min</span>
+                  <span class="stat-value" id="stat-alt-min">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Alt Max</span>
+                  <span class="stat-value" id="stat-alt-max">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Alt Avg</span>
+                  <span class="stat-value" id="stat-alt-avg">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Spd Min</span>
+                  <span class="stat-value" id="stat-spd-min">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Spd Max</span>
+                  <span class="stat-value" id="stat-spd-max">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Spd Avg</span>
+                  <span class="stat-value" id="stat-spd-avg">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">G Min</span>
+                  <span class="stat-value" id="stat-g-min">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">G Max</span>
+                  <span class="stat-value" id="stat-g-max">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">G Avg</span>
+                  <span class="stat-value" id="stat-g-avg">--</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Packets</span>
+                  <span class="stat-value" id="health-packets">0</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">CRC Err</span>
+                  <span class="stat-value" id="health-crc-errors">0</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Points</span>
+                  <span class="stat-value" id="health-data-points">0</span>
+                </div>
+                <div class="stat-item stats-reset-wrapper">
+                  <button type="button" id="reset-stats" class="small-btn danger-btn">Reset Stats</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="side-panel">
+            <div class="card position-card">
+              <div class="card-header">
+                <span class="icon">location_on</span> Position
+              </div>
+              <div class="coords">
+                <span id="lat">S 0° 0' 0"</span>
+                <span id="lon">W 0° 0' 0"</span>
+              </div>
+              <div id="map"></div>
+              <div class="map-control-overlay">
+                <button type="button" id="follow-telemetry" class="map-overlay-btn" title="Follow Drone">
+                  <span class="icon">navigation</span>
+                </button>
+                <button type="button" id="center-telemetry" class="map-overlay-btn" title="Center View">
+                  <span class="icon">my_location</span>
+                </button>
+                <div class="map-layer-switcher" id="telemetry-layer-switcher">
+                  <button type="button" class="map-layer-btn active" data-layer="dark" title="Dark">
+                    <span class="icon icon-medium">dark_mode</span>
+                  </button>
+                  <button type="button" class="map-layer-btn" data-layer="satellite" title="Satellite">
+                    <span class="icon icon-medium">satellite</span>
+                  </button>
+                  <button type="button" class="map-layer-btn" data-layer="terrain" title="Terrain">
+                    <span class="icon icon-medium">terrain</span>
+                  </button>
+                  <button type="button" class="map-layer-btn" data-layer="streets" title="Streets">
+                    <span class="icon icon-medium">map</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="bottom-row">
+            <div class="card graph-card">
+              <div class="card-header">
+                <div class="title-group">
+                  <span class="icon">show_chart</span> Real-time Graph
+                </div>
+                <div class="graph-filters">
+                  <button type="button" class="filter-btn filter-alt active" data-dataset="0" title="Altitude" aria-label="Toggle Altitude Chart"></button>
+                  <button type="button" class="filter-btn filter-spd" data-dataset="1" title="Speed" aria-label="Toggle Speed Chart"></button>
+                  <button type="button" class="filter-btn filter-pwr" data-dataset="2" title="Power" aria-label="Toggle Power Chart"></button>
+                  <button type="button" class="filter-btn filter-gf" data-dataset="3" title="G-Force" aria-label="Toggle G-Force Chart"></button>
+                  <button
+                    id="open-export"
+                    class="icon-btn"
+                    type="button"
+                    title="Export CSV Data"
+                  >
+                    <span class="icon">file_download</span>
+                  </button>
+                </div>
+              </div>
+              <div class="chart-container">
+                <canvas id="telemetryChart"></canvas>
+              </div>
+            </div>
+
+            <div class="card camera-card">
+              <div class="card-header">
+                <div class="title-group">
+                  <span class="icon">videocam</span> Camera
+                </div>
+                <select id="camera-select" class="device-select">
+                  <option value="">Select Camera</option>
+                </select>
+              </div>
+              <div class="camera-stream">
+                <video id="webcam" playsinline muted></video>
+                <canvas id="hud-canvas"></canvas>
+                <div class="camera-overlay">REC</div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section
+          class="dashboard commands-dashboard"
+          id="commands-view"
+          aria-label="Mission Dashboard"
+          style="display: none"
         >
-          <div class="offline-text">OFFLINE</div>
-          <div class="fs-09 mt-1 text-muted">
-            No telemetry signal received from drone
-          </div>
-        </div>
-        <section class="telemetry-grid">
-          <div class="card metric-card" id="altitude">
-            <div class="card-header">
-              <span class="icon">arrow_upward</span> Altitude
-            </div>
-            <div class="metric-value">0 <span class="unit">m</span></div>
-          </div>
-          <div class="card metric-card" id="speed">
-            <div class="card-header"><span class="icon">speed</span> Speed</div>
-            <div class="metric-value">0 <span class="unit">Km/h</span></div>
-          </div>
-          <div class="card metric-card" id="power">
-            <div class="card-header"><span class="icon">bolt</span> Power</div>
-            <div class="metric-value">0 <span class="unit">%</span></div>
-          </div>
-
-          <div class="card metric-card" id="gforce">
-            <div class="card-header">
-              <span class="icon">line_weight</span> G-Force
-            </div>
-            <div class="metric-value">0 <span class="unit">g</span></div>
-          </div>
-
-
-          <div class="card orientation-card">
-            <div class="card-header">
-              <span class="icon">explore</span> Orientation
-            </div>
-            <div class="orientation-table">
-              <div><span>Pitch</span> <span id="pitch">0°</span></div>
-              <div><span>Roll</span> <span id="roll">0°</span></div>
-              <div><span>Yaw</span> <span id="yaw">0°</span></div>
-              <div><span>Bearing</span> <span id="bearing">0°</span></div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Statistics Row -->
-        <section class="stats-row" id="stats-section">
-          <div class="card stats-card">
-            <div class="card-header">
-              <div class="title-group">
-                <span class="icon">analytics</span> Statistics
+          <section class="commands-top-row">
+            <!-- Left: Orders -->
+            <div class="card orders-card">
+              <div class="card-header">
+                <span class="icon">memory</span> Mission Control
               </div>
-              <button type="button" class="icon-btn" id="toggle-stats" title="Toggle Statistics">
-                <span class="icon">expand_less</span>
-              </button>
-            </div>
-            <div class="stats-grid" id="stats-grid">
-              <div class="stat-item">
-                <span class="stat-label">Alt Min</span>
-                <span class="stat-value" id="stat-alt-min">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Alt Max</span>
-                <span class="stat-value" id="stat-alt-max">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Alt Avg</span>
-                <span class="stat-value" id="stat-alt-avg">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Spd Min</span>
-                <span class="stat-value" id="stat-spd-min">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Spd Max</span>
-                <span class="stat-value" id="stat-spd-max">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Spd Avg</span>
-                <span class="stat-value" id="stat-spd-avg">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">G Min</span>
-                <span class="stat-value" id="stat-g-min">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">G Max</span>
-                <span class="stat-value" id="stat-g-max">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">G Avg</span>
-                <span class="stat-value" id="stat-g-avg">--</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Packets</span>
-                <span class="stat-value" id="health-packets">0</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">CRC Err</span>
-                <span class="stat-value" id="health-crc-errors">0</span>
-              </div>
-              <div class="stat-item">
-                <span class="stat-label">Points</span>
-                <span class="stat-value" id="health-data-points">0</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="side-panel">
-          <div class="card position-card">
-            <div class="card-header">
-              <span class="icon">location_on</span> Position
-            </div>
-            <div class="coords">
-              <span id="lat">S 0° 0' 0"</span>
-              <span id="lon">W 0° 0' 0"</span>
-            </div>
-            <div id="map"></div>
-            <div class="map-control-overlay">
-              <button type="button" id="follow-telemetry" class="map-overlay-btn" title="Follow Drone">
-                <span class="icon">navigation</span>
-              </button>
-              <button type="button" id="center-telemetry" class="map-overlay-btn" title="Center View">
-                <span class="icon">my_location</span>
-              </button>
-              <div class="map-layer-switcher" id="telemetry-layer-switcher">
-                <button type="button" class="map-layer-btn active" data-layer="dark" title="Dark">
-                  <span class="icon icon-medium">dark_mode</span>
-                </button>
-                <button type="button" class="map-layer-btn" data-layer="satellite" title="Satellite">
-                  <span class="icon icon-medium">satellite</span>
-                </button>
-                <button type="button" class="map-layer-btn" data-layer="terrain" title="Terrain">
-                  <span class="icon icon-medium">terrain</span>
-                </button>
-                <button type="button" class="map-layer-btn" data-layer="streets" title="Streets">
-                  <span class="icon icon-medium">map</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="bottom-row">
-          <div class="card graph-card">
-            <div class="card-header">
-              <div class="title-group">
-                <span class="icon">show_chart</span> Real-time Graph
-              </div>
-              <div class="graph-filters">
-                <button type="button" class="filter-btn active" data-dataset="0">
-                  Altitude
-                </button>
-                <button type="button" class="filter-btn" data-dataset="1">Speed</button>
-                <button type="button" class="filter-btn" data-dataset="2">Power</button>
-                <button type="button" class="filter-btn" data-dataset="3">G-Force</button>
-                <button
-                  id="open-export"
-                  class="icon-btn"
-                  type="button"
-                  title="Export CSV Data"
-                >
-                  <span class="icon">file_download</span>
-                </button>
-              </div>
-            </div>
-            <div class="chart-container">
-              <canvas id="telemetryChart"></canvas>
-            </div>
-          </div>
-
-          <div class="card camera-card">
-            <div class="card-header">
-              <div class="title-group">
-                <span class="icon">videocam</span> Camera
-              </div>
-              <select id="camera-select" class="device-select">
-                <option value="">Select Camera</option>
-              </select>
-            </div>
-            <div class="camera-stream">
-              <video id="webcam" playsinline muted></video>
-              <canvas id="hud-canvas"></canvas>
-              <div class="camera-overlay">REC</div>
-            </div>
-          </div>
-
-        </section>
-      </section>
-
-      <section
-        class="dashboard commands-dashboard"
-        id="commands-view"
-        aria-label="Mission Dashboard"
-        style="display: none"
-      >
-        <section class="commands-top-row">
-          <!-- Left: Orders -->
-          <div class="card orders-card">
-            <div class="card-header">
-              <span class="icon">memory</span> Mission Control
-            </div>
-            <div class="current-order">
-              Active Order: <span id="current-order-display">None</span>
-            </div>
-
-            <div class="new-order-section">
-              <h3>Issue New Order</h3>
-              <div class="order-buttons">
-                <button type="button" class="order-btn" data-mode="1">Advance</button>
-                <button type="button" class="order-btn" data-mode="2">Orbit</button>
-                <button type="button" class="order-btn" data-mode="0">Manual Control</button>
+              <div class="current-order">
+                Active Order: <span id="current-order-display">None</span>
               </div>
 
-              <div class="order-inputs">
-                <div class="input-group">
-                  <label>Target Altitude:</label>
-                  <div class="input-wrapper">
-                    <input
-                      type="text"
-                      inputmode="numeric"
-                      pattern="[0-9]*"
-                      id="cmd-alt"
-                      value="200"
-                      placeholder="e.g.: 120"
-                    >
-                    <span class="input-suffix">meters</span>
-                  </div>
-                </div>
-                <div class="input-group">
-                  <label>Target Lat:</label>
-                  <input
-                    type="text"
-                    id="cmd-lat"
-                    placeholder="E.g.: -33.456789"
-                    readonly
-                  >
-                </div>
-                <div class="input-group">
-                  <label>Target Lon:</label>
-                  <input
-                    type="text"
-                    id="cmd-lon"
-                    placeholder="E.g.: -70.648211"
-                    readonly
-                  >
+              <div class="new-order-section">
+                <h3>Issue New Order</h3>
+                <div class="order-buttons">
+                  <button type="button" class="order-btn" data-mode="1">Advance</button>
+                  <button type="button" class="order-btn" data-mode="2">Orbit</button>
+                  <button type="button" class="order-btn" data-mode="0">Manual Control</button>
                 </div>
 
-                <div
-                  id="orbit-fields"
-                  class="hidden flex-column gap-05"
-                >
+                <div class="order-inputs">
                   <div class="input-group">
-                    <label>Orbit Radius:</label>
+                    <label>Target Altitude:</label>
                     <div class="input-wrapper">
                       <input
                         type="text"
                         inputmode="numeric"
                         pattern="[0-9]*"
-                        id="cmd-radius"
-                        value="50"
-                        placeholder="e.g.: 50"
+                        id="cmd-alt"
+                        value="200"
+                        placeholder="e.g.: 120"
                       >
                       <span class="input-suffix">meters</span>
                     </div>
                   </div>
                   <div class="input-group">
-                    <label>Direction:</label>
-                    <div class="direction-toggle">
-                      <button type="button" class="dir-btn selected" data-dir="0">
-                        ↺ CCW
-                      </button>
-                      <button type="button" class="dir-btn" data-dir="1">↻ CW</button>
+                    <label>Target Lat:</label>
+                    <input
+                      type="text"
+                      id="cmd-lat"
+                      placeholder="E.g.: -33.456789"
+                      readonly
+                    >
+                  </div>
+                  <div class="input-group">
+                    <label>Target Lon:</label>
+                    <input
+                      type="text"
+                      id="cmd-lon"
+                      placeholder="E.g.: -70.648211"
+                      readonly
+                    >
+                  </div>
+
+                  <div
+                    id="orbit-fields"
+                    class="hidden flex-column gap-05"
+                  >
+                    <div class="input-group">
+                      <label>Orbit Radius:</label>
+                      <div class="input-wrapper">
+                        <input
+                          type="text"
+                          inputmode="numeric"
+                          pattern="[0-9]*"
+                          id="cmd-radius"
+                          value="50"
+                          placeholder="e.g.: 50"
+                        >
+                        <span class="input-suffix">meters</span>
+                      </div>
+                    </div>
+                    <div class="input-group">
+                      <label>Direction:</label>
+                      <div class="direction-toggle">
+                        <button type="button" class="dir-btn selected" data-dir="0">
+                          ↺ CCW
+                        </button>
+                        <button type="button" class="dir-btn" data-dir="1">↻ CW</button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div class="btn-center gap-05">
-                <button type="button" id="send-command-btn" class="primary-btn">
-                  SEND ORDER
-                </button>
-                <button type="button" id="clear-command-btn" class="secondary-btn">
-                  CLEAR
-                </button>
-              </div>
-            </div>
-
-          </div>
-
-          <!-- Right: Position & Map -->
-          <div class="card position-card">
-            <div class="card-header">
-              <span class="icon">navigation</span> Position
-            </div>
-
-            <div class="coords">
-              <span id="cmd-map-lat">Lat S 0° 0' 0"</span>
-              <span id="cmd-map-lon">Lon W 0° 0' 0"</span>
-            </div>
-            <div id="mission-map" class="mission-map-container"></div>
-            <div class="map-control-overlay">
-                <button type="button" id="follow-mission" class="map-overlay-btn" title="Follow Drone">
-                  <span class="icon">navigation</span>
-                </button>
-                <button type="button" id="center-mission" class="map-overlay-btn" title="Center View">
-                  <span class="icon">my_location</span>
-                </button>
-              <div class="map-layer-switcher" id="mission-layer-switcher">
-                <button type="button" class="map-layer-btn active" data-layer="dark" title="Dark">
-                  <span class="icon icon-medium">dark_mode</span>
-                </button>
-                <button type="button" class="map-layer-btn" data-layer="satellite" title="Satellite">
-                  <span class="icon icon-medium">satellite</span>
-                </button>
-                <button type="button" class="map-layer-btn" data-layer="terrain" title="Terrain">
-                  <span class="icon icon-medium">terrain</span>
-                </button>
-                <button type="button" class="map-layer-btn" data-layer="streets" title="Streets">
-                  <span class="icon icon-medium">map</span>
-                </button>
+                <div class="btn-center gap-05">
+                  <button type="button" id="send-command-btn" class="primary-btn">
+                    SEND ORDER
+                  </button>
+                  <button type="button" id="clear-command-btn" class="secondary-btn">
+                    CLEAR
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+
+            <!-- Right: Position & Map -->
+            <div class="card position-card">
+              <div class="card-header">
+                <span class="icon">navigation</span> Position
+              </div>
+
+              <div class="coords">
+                <span id="cmd-map-lat">Lat S 0° 0' 0"</span>
+                <span id="cmd-map-lon">Lon W 0° 0' 0"</span>
+              </div>
+              <div id="mission-map" class="mission-map-container"></div>
+              <div class="map-control-overlay">
+                  <button type="button" id="follow-mission" class="map-overlay-btn" title="Follow Drone">
+                    <span class="icon">navigation</span>
+                  </button>
+                  <button type="button" id="center-mission" class="map-overlay-btn" title="Center View">
+                    <span class="icon">my_location</span>
+                  </button>
+                <div class="map-layer-switcher" id="mission-layer-switcher">
+                  <button type="button" class="map-layer-btn active" data-layer="dark" title="Dark">
+                    <span class="icon icon-medium">dark_mode</span>
+                  </button>
+                  <button type="button" class="map-layer-btn" data-layer="satellite" title="Satellite">
+                    <span class="icon icon-medium">satellite</span>
+                  </button>
+                  <button type="button" class="map-layer-btn" data-layer="terrain" title="Terrain">
+                    <span class="icon icon-medium">terrain</span>
+                  </button>
+                  <button type="button" class="map-layer-btn" data-layer="streets" title="Streets">
+                    <span class="icon icon-medium">map</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Bottom: Mission Plan -->
+          <section class="mission-plan-row">
+            <div class="card mission-plan-card">
+              <div class="card-header">
+                <div class="title-group">
+                  <span class="icon">format_list_numbered</span> Mission Plan
+                </div>
+                <div class="flex-align-center gap-03">
+                  <button type="button" class="icon-btn" id="upload-mission" title="Upload to Drone">
+                    <span class="icon icon-large">cloud_upload</span>
+                  </button>
+                  <button type="button" class="icon-btn" id="download-mission" title="Download from Drone">
+                    <span class="icon icon-large">cloud_download</span>
+                  </button>
+                  <button type="button" class="icon-btn" id="clear-mission" title="Clear Mission">
+                    <span class="icon icon-large color-critical">delete</span>
+                  </button>
+                  <button type="button" class="icon-btn" id="center-mission-map" title="Center Mission Map">
+                    <span class="icon icon-large">my_location</span>
+                  </button>
+                </div>
+              </div>
+              <div class="current-waypoint">
+                Active Waypoint: <span id="wp-active-idx">1</span>
+              </div>
+              <div class="waypoints-list" id="waypoints-grid">
+                <!-- Dynamically populated via JS -->
+                <div class="waypoint-item empty-state">
+                  No waypoints registered. Use the map to add them.
+                </div>
+              </div>
+            </div>
+          </section>
         </section>
-
-        <!-- Bottom: Mission Plan -->
-        <section class="mission-plan-row">
-          <div class="card mission-plan-card">
-            <div class="card-header">
-              <div class="title-group">
-                <span class="icon">format_list_numbered</span> Mission Plan
-              </div>
-              <div class="flex-align-center gap-03">
-                <button type="button" class="icon-btn" id="upload-mission" title="Upload to Drone">
-                  <span class="icon icon-large">cloud_upload</span>
-                </button>
-                <button type="button" class="icon-btn" id="download-mission" title="Download from Drone">
-                  <span class="icon icon-large">cloud_download</span>
-                </button>
-                <button type="button" class="icon-btn" id="clear-mission" title="Clear Mission">
-                  <span class="icon icon-large color-critical">delete</span>
-                </button>
-                <button type="button" class="icon-btn" id="center-mission-map" title="Center Mission Map">
-                  <span class="icon icon-large">my_location</span>
-                </button>
-              </div>
-            </div>
-            <div class="current-waypoint">
-              Active Waypoint: <span id="wp-active-idx">1</span>
-            </div>
-            <div class="waypoints-list" id="waypoints-grid">
-              <!-- Dynamically populated via JS -->
-              <div class="waypoint-item empty-state">
-                No waypoints registered. Use the map to add them.
-              </div>
-            </div>
-          </div>
-
-        </section>
-      </section>
-    </main>
-    <!-- End VIEWS CONTAINER -->
+      </main>
+      <!-- End VIEWS CONTAINER -->
+    </div>
 
     <!-- Configuration Modal -->
     <div id="config-modal" class="modal-overlay">

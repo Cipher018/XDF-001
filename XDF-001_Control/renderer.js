@@ -138,8 +138,19 @@ const statsTracker = {
         document.getElementById('stat-g-min').textContent = fmt(this.g.min);
         document.getElementById('stat-g-max').textContent = fmt(this.g.max);
         document.getElementById('stat-g-avg').textContent = fmt(avg(this.g));
+    },
+    reset() {
+        this.alt = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+        this.spd = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+        this.g =   { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+        this.render();
     }
 };
+
+document.getElementById('reset-stats')?.addEventListener('click', () => {
+    statsTracker.reset();
+    showToast('Statistics reset', 'info');
+});
 
 // Stats collapsible toggle
 document.getElementById('toggle-stats')?.addEventListener('click', () => {
@@ -197,9 +208,11 @@ if (window.electronAPI.onSerialStatus) {
         if (status.status === 'connected') {
             pill.classList.add('connected');
             text.textContent = t('connected');
+            setOnlineState(true); // Board detected
             showToast(`Serial ${t('connected')}: ${status.port || ''}`, 'success');
-        } else if (status.status === 'disconnected') {
+        } else if (status.status === 'disconnected' || status.status === 'failed' || status.status === 'error') {
             text.textContent = t('disconnected');
+            setOnlineState(false); // Hardware not detected
             showToast(`Serial ${t('disconnected')}`, 'warning');
         } else if (status.status === 'reconnecting') {
             pill.classList.add('reconnecting');
@@ -351,13 +364,15 @@ const telemetryChart = new Chart(ctx, {
 document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const datasetIndex = parseInt(btn.getAttribute('data-dataset'));
-        const isHidden = telemetryChart.data.datasets[datasetIndex].hidden;
+        const isVisible = telemetryChart.isDatasetVisible(datasetIndex);
         
-        // Toggle state
-        telemetryChart.data.datasets[datasetIndex].hidden = !isHidden;
-        btn.classList.toggle('active', !telemetryChart.data.datasets[datasetIndex].hidden);
-        
-        telemetryChart.update();
+        if (isVisible) {
+            telemetryChart.hide(datasetIndex);
+            btn.classList.remove('active');
+        } else {
+            telemetryChart.show(datasetIndex);
+            btn.classList.add('active');
+        }
     });
 });
 
@@ -396,6 +411,9 @@ async function startCamera(deviceId = null) {
         const video = document.getElementById('webcam');
         if (video) {
             video.srcObject = currentStream;
+            video.onloadedmetadata = () => {
+                video.play().catch(e => console.error("Video play failed:", e));
+            };
         }
     } catch (error) {
         console.error('Error accessing camera:', error);
@@ -505,6 +523,9 @@ window.electronAPI.onTelemetryData((data) => {
         currentMode,
         cmd_throttle
     } = data;
+    
+    const elapsedMs = Date.now() - appStartTime;
+    const formattedTime = formatElapsed(elapsedMs);
 
     const modes = ["Manual", "Waypoint", "Orbit"];
     const state = modes[currentMode] || "Unknown";
@@ -547,21 +568,7 @@ window.electronAPI.onTelemetryData((data) => {
     // Hide OFFLINE banner on valid data
     setOnlineState(true);
 
-    // Update Chart
-    const elapsedMs = Date.now() - appStartTime;
-    const formattedTime = formatElapsed(elapsedMs);
-    telemetryChart.data.labels.push(formattedTime);
-    
-    // Dataset 0: Altitude
-    telemetryChart.data.datasets[0].data.push(alt);
-    // Dataset 1: Speed
-    telemetryChart.data.datasets[1].data.push(speed);
-    // Dataset 2: Power (Throttle command from RC)
-    telemetryChart.data.datasets[2].data.push(cmd_throttle || 0); 
-    // Dataset 3: G-Force
-    telemetryChart.data.datasets[3].data.push(gforce);
-
-    // Update Log for CSV Export (with memory limit)
+    // Update Log for CSV Export
     telemetryLog.push({
         elapsed: formattedTime,
         ms: elapsedMs,
@@ -571,16 +578,9 @@ window.electronAPI.onTelemetryData((data) => {
         telemetryLog.splice(0, telemetryLog.length - MAX_TELEMETRY_LOG);
     }
 
-    if (telemetryChart.data.labels.length > 20) {
-        telemetryChart.data.labels.shift();
-        telemetryChart.data.datasets.forEach(ds => ds.data.shift());
-    }
-    telemetryChart.update('none');
-
     // Update Statistics
     statsTracker.update(alt, speed, gforce);
 
-    // Anomaly Detection
     // Anomaly Detection
     if (data._anomalies && data._anomalies.length > 0) {
         if (!window._lastAnomalyTime) window._lastAnomalyTime = {};
@@ -588,7 +588,6 @@ window.electronAPI.onTelemetryData((data) => {
         data._anomalies.forEach(anomaly => {
             const key = { HIGH_GFORCE: 'highGforce', NEGATIVE_ALT: 'negativeAlt', HIGH_SPEED: 'highSpeed', EXTREME_ALT: 'extremeAlt' }[anomaly];
             if (key) {
-                // Throttle toasts to once every 5 seconds per anomaly type
                 if (!window._lastAnomalyTime[anomaly] || (now - window._lastAnomalyTime[anomaly] > 5000)) {
                     window._lastAnomalyTime[anomaly] = now;
                     showToast(t(key), 'warning', 5000);
@@ -600,6 +599,35 @@ window.electronAPI.onTelemetryData((data) => {
     // Update Health Dashboard
     document.getElementById('health-data-points').textContent = telemetryLog.length;
 });
+
+// =============================================
+// CHART DATA SYNC (Independent of Serial)
+// =============================================
+function updateChartFromDashboard() {
+    const elapsedMs = Date.now() - appStartTime;
+    const formattedTime = formatElapsed(elapsedMs);
+    
+    // Parse values from dashboard HTML (enables simulation sync)
+    const alt = parseFloat(document.querySelector('#altitude .metric-value').textContent) || 0;
+    const speed = parseFloat(document.querySelector('#speed .metric-value').textContent) || 0;
+    const power = parseFloat(document.querySelector('#power .metric-value').textContent) || 0;
+    const gforce = parseFloat(document.querySelector('#gforce .metric-value').textContent) || 0;
+
+    telemetryChart.data.labels.push(formattedTime);
+    telemetryChart.data.datasets[0].data.push(alt);
+    telemetryChart.data.datasets[1].data.push(speed);
+    telemetryChart.data.datasets[2].data.push(power); 
+    telemetryChart.data.datasets[3].data.push(gforce);
+
+    if (telemetryChart.data.labels.length > 20) {
+        telemetryChart.data.labels.shift();
+        telemetryChart.data.datasets.forEach(ds => ds.data.shift());
+    }
+    telemetryChart.update('none');
+}
+
+// Run chart sync periodically
+setInterval(updateChartFromDashboard, 1000);
 
 // Removed duplicate fake data logic since it is in main.js simulator
 // Export Modal Logic
@@ -734,10 +762,15 @@ tabButtons.forEach(btn => {
             missionMapInitialized = true;
         }
 
-    // Inform Leaflet of resize when switching so tiles render correctly
+    // Inform Leaflet and Chart.js of resize when switching so components render correctly
         if (target === 'commands-view' && missionMap) {
             setTimeout(() => {
                 missionMap.invalidateSize();
+            }, 100);
+        } else if (target === 'telemetry-view') {
+            setTimeout(() => {
+                if (map) map.invalidateSize();
+                if (telemetryChart) telemetryChart.resize();
             }, 100);
         }
     });
@@ -1258,14 +1291,38 @@ setupMapControls('map', 'follow-telemetry', 'center-telemetry');
 let _offlineTimer = null;
 let _isOnline = false;
 
+let _offlineOverlayTimeout = null;
 function setOnlineState(online) {
     if (online === _isOnline) return;
     _isOnline = online;
-    const banner = document.getElementById('offline-banner');
-    if (banner) banner.style.display = online ? 'none' : 'flex';
-    // Update drone state pill
+
+    const overlay = document.getElementById('offline-overlay');
+    const headerMsg = document.getElementById('offline-header-msg');
     const pill = document.getElementById('drone-state-indicator');
-    if (pill) pill.style.color = online ? '' : '#ff4d4d';
+
+    if (online) {
+        // Switch to Online
+        if (overlay) overlay.classList.add('hidden');
+        if (headerMsg) headerMsg.textContent = '';
+        if (pill) pill.style.color = '';
+        if (_offlineOverlayTimeout) {
+            clearTimeout(_offlineOverlayTimeout);
+            _offlineOverlayTimeout = null;
+        }
+    } else {
+        // Switch to Offline
+        if (overlay) {
+            overlay.classList.remove('hidden');
+            // Hide after 5 seconds but keep header message
+            _offlineOverlayTimeout = setTimeout(() => {
+                overlay.classList.add('hidden');
+                if (headerMsg) {
+                    headerMsg.textContent = 'SIGNAL LOST - OFFLINE';
+                }
+            }, 5000);
+        }
+        if (pill) pill.style.color = '#ff4d4d';
+    }
 }
 
 window.electronAPI.onTelemetryData(() => {
@@ -1825,7 +1882,18 @@ loadPreferences();
 setupMissionLayerSwitcher();
 
 // Restore saved map layer
-const savedLayer = localStorage.getItem('cadi_map_layer');
 if (savedLayer && tileLayers[savedLayer]) {
     switchMapLayer(map, savedLayer, document.getElementById('telemetry-layer-switcher'));
 }
+
+// =============================================
+// GLOBAL SHORTCUTS
+// =============================================
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'F11') {
+        e.preventDefault();
+        if (window.electronAPI && window.electronAPI.toggleFullscreen) {
+            window.electronAPI.toggleFullscreen();
+        }
+    }
+});

@@ -25,4 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Stats
   getPacketStats: () => ipcRenderer.invoke('get-packet-stats'),
+  
+  // UI
+  toggleFullscreen: () => ipcRenderer.send('toggle-fullscreen'),
 });
