@@ -40,7 +40,6 @@ float pitch = 0.0;
 float totalGForce = 0.0;
 
 // --- Radio nRF24L01 Configuration ---
-// --- Radio nRF24L01 Configuration ---
 #define CE_PIN 5
 #define CSN_PIN 4
 
@@ -48,10 +47,86 @@ RF24 radio(CE_PIN, CSN_PIN);
 const byte pipeRX[6] = "CMD01";
 const byte pipeTX[6] = "TEL01";
 
+// ═══════════════════════════════════════════════════════
+// SEGURIDAD DE COMUNICACIONES (XXTEA)
+// ═══════════════════════════════════════════════════════
+uint32_t sharedKey[4] = { 0x58444630, 0x30314B45, 0x595F3230, 0x32362121 }; // "XDF001KEY_2026!!" en hex
+#define XXTEA_DELTA 0x9e3779b9
+#define XXTEA_MX (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((sum^y) + (sharedKey[(p&3)^e] ^ z)))
+
+void btea(uint32_t *v, int n) {
+  uint32_t y, z, sum;
+  unsigned p, rounds, e;
+  if (n > 1) {
+    rounds = 6 + 52/n;
+    sum = 0;
+    z = v[n-1];
+    do {
+      sum += XXTEA_DELTA;
+      e = (sum >> 2) & 3;
+      for (p=0; p<n-1; p++) {
+        y = v[p+1];
+        z = v[p] += XXTEA_MX;
+      }
+      y = v[0];
+      z = v[n-1] += XXTEA_MX;
+    } while (--rounds);
+  } else if (n < -1) {
+    n = -n;
+    rounds = 6 + 52/n;
+    sum = rounds*XXTEA_DELTA;
+    y = v[0];
+    do {
+      e = (sum >> 2) & 3;
+      for (p=n-1; p>0; p--) {
+        z = v[p-1];
+        y = v[p] -= XXTEA_MX;
+      }
+      z = v[n-1];
+      y = v[0] -= XXTEA_MX;
+      sum -= XXTEA_DELTA;
+    } while (--rounds);
+  }
+}
+
+// ── Headers Seguros ──
+const uint8_t MAGIC_CMD   = 0xAA;
+const uint8_t MAGIC_TELEM = 0xBB;
+
+struct __attribute__((packed)) SecureCommand {
+  uint8_t  magic;
+  uint8_t  seq;
+  uint16_t crc;
+  int16_t  commands[4];
+}; // 12 bytes
+
+struct __attribute__((packed)) SecureTelemetry {
+  uint8_t  magic;
+  uint8_t  seq;
+  uint16_t crc;
+  float    telem[6];
+}; // 28 bytes
+
+SecureCommand   secCmd;
+SecureTelemetry secTelem;
+uint8_t         telemSeq = 0;
+
+uint16_t calculateRadioCRC16(const uint8_t *data, size_t length) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < length; i++) {
+    crc ^= (uint16_t)data[i] << 8;
+    for (uint8_t j = 0; j < 8; j++) {
+      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+      else              crc = crc << 1;
+    }
+  }
+  return crc;
+}
+
 // --- Payloads ---
-int16_t commandData[4];       // Received commands [Yaw, Power, Pitch, Roll]
 float telemetryData[6];       // Telemetry packet to send
 unsigned long lastRFTime = 0; // Failsafe timer
+bool imuActive = false;
 
 // --- Servo Driver PCA9685 Configuration ---
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
@@ -80,26 +155,30 @@ void setup() {
   Wire.begin(21, 22);    // SDA: 21, SCL: 22
   Wire.setClock(400000); // 400kHz I2C high speed
 
-  if (mpu.begin() < 0) {
-    Serial.println("FATAL ERROR: MPU-9250 not detected. System Halted.");
-    while (1)
-      ;
+  int mpuRetries = 10;
+  while (mpu.begin() < 0 && mpuRetries > 0) {
+    delay(100);
+    mpuRetries--;
   }
+  imuActive = (mpuRetries > 0);
 
-  // Configure MPU-9250 settings
-  mpu.setAccelRange(MPU9250::ACCEL_RANGE_8G);
-  mpu.setGyroRange(MPU9250::GYRO_RANGE_500DPS);
-  mpu.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_20HZ);
-  mpu.setSrd(19); // Internal sample rate divider to reach ~50Hz
+  if (imuActive) {
+    // Configure MPU-9250 settings
+    mpu.setAccelRange(MPU9250::ACCEL_RANGE_8G);
+    mpu.setGyroRange(MPU9250::GYRO_RANGE_500DPS);
+    mpu.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_20HZ);
+    mpu.setSrd(19); // Internal sample rate divider to reach ~50Hz
 
-  Serial.println("MPU-9250: Online");
+    Serial.println("MPU-9250: Online");
 
-  // Calibrate Gyroscope (keep sensor stationary during this phase)
-  Serial.println(
-      "CALIBRATING GYRO (3 seconds)... Please do not move the aircraft.");
-  delay(1000);
-  mpu.calibrateGyro();
-  Serial.println("Gyroscope Calibration Complete.");
+    // Calibrate Gyroscope (keep sensor stationary during this phase)
+    Serial.println("CALIBRATING GYRO (3 seconds)... Please do not move the aircraft.");
+    delay(1000);
+    mpu.calibrateGyro();
+    Serial.println("Gyroscope Calibration Complete.");
+  } else {
+    Serial.println("WARNING: MPU-9250 not detected. Running without IMU.");
+  }
 
   // Initialize Radio nRF24L01
   if (!radio.begin()) {
@@ -130,6 +209,18 @@ void setup() {
   esc.attach(ESC_PIN, 1000, 2000); // Standard ESC pulse width
   esc.write(0);                    // Arming step (neutral)
 
+void pushTelemetryAck() {
+  updateTelemetry();
+  secTelem.magic = MAGIC_TELEM;
+  secTelem.seq   = telemSeq++;
+  memcpy(secTelem.telem, telemetryData, sizeof(telemetryData));
+  secTelem.crc   = calculateRadioCRC16((uint8_t*)&secTelem.telem, sizeof(telemetryData));
+  
+  btea((uint32_t*)&secTelem, 7); // Encrypt 7 words (28 bytes)
+  radio.writeAckPayload(1, &secTelem, sizeof(SecureTelemetry));
+}
+
+  // Initialize nRF Radio after IMU... (Already inside setup function, I'll place this just after servo zeroing)
   // Set all servos to neutral position (90 degrees)
   for (int i = 0; i < 7; i++) {
     setServoAngle(i, 90);
@@ -137,9 +228,10 @@ void setup() {
 
   Serial.println("Servo Driver PCA9685: Ready");
 
+  radio.enableDynamicPayloads();
+
   // Prepare first telemetry packet for transmission
-  updateTelemetry();
-  radio.writeAckPayload(1, &telemetryData, sizeof(telemetryData));
+  pushTelemetryAck();
   lastRFTime = millis();
 
   Serial.println("\n--- AIRCRAFT CADI_A: READY FOR MISSION ---\n");
@@ -152,52 +244,54 @@ void loop() {
   static unsigned long lastSensorUpdate = 0;
   if (millis() - lastSensorUpdate >= 20) { // 50Hz timer
     lastSensorUpdate = millis();
-    readMPU();
+    if (imuActive) readMPU();
   }
 
   // Process incoming radio commands if available
   if (radio.available()) {
-    lastRFTime = millis();
-    // Retrieve command payload from ground station
-    radio.read(&commandData, sizeof(commandData));
+    uint8_t len = radio.getDynamicPayloadSize();
+    if (len == sizeof(SecureCommand)) {
+      radio.read(&secCmd, sizeof(SecureCommand));
+      btea((uint32_t*)&secCmd, -3); // Decrypt 12 bytes
 
-    // Command Mapping: [0]=Yaw, [1]=Power, [2]=Pitch, [3]=Roll
-    // Map control range to appropriate servo angles
-    servo1Pos = commandData[1]; // Throttle (Pass-through)
-    servo2Pos = map(commandData[0], -40, 40, 50, 130); // Rudder/Yaw
-    servo3Pos = map(commandData[3], -45, 45, 45, 135); // Left Aileron
-    servo4Pos =
-        map(commandData[3], -45, 45, 135, 45); // Right Aileron (Inverted)
-    servo5Pos = 90;                            // Flaps - Future implementation
-    servo6Pos = 90;                            // Flaps - Future implementation
-    servo7Pos = map(commandData[2], -30, 30, 60, 120); // Left Elevator
-    servo8Pos = map(commandData[2], -30, 30, 60, 120); // Right Elevator
+      uint16_t crc = calculateRadioCRC16((uint8_t*)&secCmd.commands, sizeof(secCmd.commands));
+      if (secCmd.magic == MAGIC_CMD && secCmd.crc == crc) {
+        lastRFTime = millis();
 
-    // Update dedicated ESC Throttle (Mapping 0-180 command to standard pulse
-    // width optionally, or letting servo lib map it)
-    int escAngle = map(servo1Pos, 0, 180, 0, 180);
-    esc.write(escAngle);
+        // Command Mapping: [0]=Yaw, [1]=Power, [2]=Pitch, [3]=Roll
+        servo1Pos = secCmd.commands[1]; // Throttle (Pass-through)
+        servo2Pos = map(secCmd.commands[0], -40, 40, 50, 130); // Rudder/Yaw
+        servo3Pos = map(secCmd.commands[3], -45, 45, 45, 135); // Left Aileron
+        servo4Pos = map(secCmd.commands[3], -45, 45, 135, 45); // Right Aileron (Inverted)
+        servo5Pos = 90;                            // Flaps - Future implementation
+        servo6Pos = 90;                            // Flaps - Future implementation
+        servo7Pos = map(secCmd.commands[2], -30, 30, 60, 120); // Left Elevator
+        servo8Pos = map(secCmd.commands[2], -30, 30, 60, 120); // Right Elevator
 
-    // Update servo physical positions through PCA9685
-    setServoAngle(SERVO_CH_YAW, servo2Pos);
-    setServoAngle(SERVO_CH_ROLL_L, servo3Pos);
-    setServoAngle(SERVO_CH_ROLL_R, servo4Pos);
-    setServoAngle(SERVO_CH_FLAP_L, servo5Pos);
-    setServoAngle(SERVO_CH_FLAP_R, servo6Pos);
-    setServoAngle(SERVO_CH_PITCH_L, servo7Pos);
-    setServoAngle(SERVO_CH_PITCH_R, servo8Pos);
+        int escAngle = map(servo1Pos, 0, 180, 0, 180);
+        esc.write(escAngle);
 
-    // Prepare fresh telemetry for the next acknowledgment
-    updateTelemetry();
-    radio.writeAckPayload(1, &telemetryData, sizeof(telemetryData));
+        setServoAngle(SERVO_CH_YAW, servo2Pos);
+        setServoAngle(SERVO_CH_ROLL_L, servo3Pos);
+        setServoAngle(SERVO_CH_ROLL_R, servo4Pos);
+        setServoAngle(SERVO_CH_FLAP_L, servo5Pos);
+        setServoAngle(SERVO_CH_FLAP_R, servo6Pos);
+        setServoAngle(SERVO_CH_PITCH_L, servo7Pos);
+        setServoAngle(SERVO_CH_PITCH_R, servo8Pos);
 
-    Serial.println("Command received. Telemetry updated.");
+        pushTelemetryAck();
+        Serial.println("Command received. Telemetry updated.");
+      }
+    } else {
+      uint8_t dummy[32];
+      radio.read(&dummy, len);
+    }
   }
 
   // Failsafe check: Trigger if signal lost for > 1000ms
   if (millis() - lastRFTime > 1000) {
     esc.write(0); // Cut throttle
-    setServoAngle(SERVO_CH_YAW, 90);
+    setServoAngle(SERVO_CH_YAW, 100); // Slight rudder to circle
     setServoAngle(SERVO_CH_ROLL_L, 90);
     setServoAngle(SERVO_CH_ROLL_R, 90);
     setServoAngle(SERVO_CH_FLAP_L, 90);

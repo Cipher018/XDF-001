@@ -65,6 +65,80 @@ const byte pipeTX[6] = "CMD01"; // Command Out Pipe
 const byte pipeRX[6] = "TEL01"; // Telemetry In Pipe
 
 // Payload Structures
+// ═══════════════════════════════════════════════════════
+// SEGURIDAD DE COMUNICACIONES (XXTEA)
+// ═══════════════════════════════════════════════════════
+uint32_t sharedKey[4] = { 0x58444630, 0x30314B45, 0x595F3230, 0x32362121 }; // "XDF001KEY_2026!!" en hex
+#define XXTEA_DELTA 0x9e3779b9
+#define XXTEA_MX (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((sum^y) + (sharedKey[(p&3)^e] ^ z)))
+
+void btea(uint32_t *v, int n) {
+  uint32_t y, z, sum;
+  unsigned p, rounds, e;
+  if (n > 1) {
+    rounds = 6 + 52/n;
+    sum = 0;
+    z = v[n-1];
+    do {
+      sum += XXTEA_DELTA;
+      e = (sum >> 2) & 3;
+      for (p=0; p<n-1; p++) {
+        y = v[p+1];
+        z = v[p] += XXTEA_MX;
+      }
+      y = v[0];
+      z = v[n-1] += XXTEA_MX;
+    } while (--rounds);
+  } else if (n < -1) {
+    n = -n;
+    rounds = 6 + 52/n;
+    sum = rounds*XXTEA_DELTA;
+    y = v[0];
+    do {
+      e = (sum >> 2) & 3;
+      for (p=n-1; p>0; p--) {
+        z = v[p-1];
+        y = v[p] -= XXTEA_MX;
+      }
+      z = v[n-1];
+      y = v[0] -= XXTEA_MX;
+      sum -= XXTEA_DELTA;
+    } while (--rounds);
+  }
+}
+
+// ── Headers Seguros ──
+const uint8_t MAGIC_CMD   = 0xAA;
+const uint8_t MAGIC_TELEM = 0xBB;
+
+struct __attribute__((packed)) SecureCommand {
+  uint8_t  magic;
+  uint8_t  seq;
+  uint16_t crc;
+  int16_t  commands[4];
+}; // 12 bytes
+
+struct __attribute__((packed)) SecureTelemetry {
+  uint8_t  magic;
+  uint8_t  seq;
+  uint16_t crc;
+  float    telem[6];
+}; // 28 bytes
+
+uint8_t cmdSeq = 0;
+
+uint16_t calculateRadioCRC16(const uint8_t *data, size_t length) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < length; i++) {
+    crc ^= (uint16_t)data[i] << 8;
+    for (uint8_t j = 0; j < 8; j++) {
+      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+      else              crc = crc << 1;
+    }
+  }
+  return crc;
+}
+
 int16_t commands[4];
 float telemetry[6];
 
@@ -582,6 +656,7 @@ void setup() {
   }
 
   radio.enableAckPayload();
+  radio.enableDynamicPayloads();
   radio.setRetries(3, 5);
   radio.openWritingPipe(pipeTX);
   radio.openReadingPipe(1, pipeRX);
@@ -608,23 +683,24 @@ void loop() {
   bool dataUpdated = BP32.update();
 
   // MODE SWITCHING
+  static unsigned long lastBtnTime = 0;
   if (dataUpdated && myControllers[0] && myControllers[0]->isConnected()) {
-    if (myControllers[0]->a()) {
-      currentMode = MODE_WAYPOINT;
-      Serial.println("\n[MODE] WAYPOINT NAVIGATION ACTIVATED");
-      delay(300);
-    }
-    if (myControllers[0]->b()) {
-      currentMode = MODE_MANUAL;
-      resetOrbitSystem();
-      Serial.println("\n[MODE] MANUAL CONTROL ACTIVATED");
-      delay(300);
-    }
-    if (myControllers[0]->x()) {
-      currentMode = MODE_ORBIT;
-      resetOrbitSystem();
-      Serial.println("\n[MODE] ORBIT NAVIGATION ACTIVATED");
-      delay(300);
+    if (millis() - lastBtnTime > 300) {
+      if (myControllers[0]->a()) {
+        currentMode = MODE_WAYPOINT;
+        Serial.println("\n[MODE] WAYPOINT NAVIGATION ACTIVATED");
+        lastBtnTime = millis();
+      } else if (myControllers[0]->b()) {
+        currentMode = MODE_MANUAL;
+        resetOrbitSystem();
+        Serial.println("\n[MODE] MANUAL CONTROL ACTIVATED");
+        lastBtnTime = millis();
+      } else if (myControllers[0]->x()) {
+        currentMode = MODE_ORBIT;
+        resetOrbitSystem();
+        Serial.println("\n[MODE] ORBIT NAVIGATION ACTIVATED");
+        lastBtnTime = millis();
+      }
     }
   }
 
@@ -661,20 +737,39 @@ void loop() {
     commands[2] = cmd.pitch;
     commands[3] = cmd.roll;
 
+    SecureCommand secCmd;
+    secCmd.magic = MAGIC_CMD;
+    secCmd.seq   = cmdSeq++;
+    secCmd.commands[0] = commands[0];
+    secCmd.commands[1] = commands[1];
+    secCmd.commands[2] = commands[2];
+    secCmd.commands[3] = commands[3];
+    secCmd.crc   = calculateRadioCRC16((uint8_t*)&secCmd.commands, sizeof(secCmd.commands));
+    
+    btea((uint32_t*)&secCmd, 3); // Encrypt 12 bytes
+
     // TRANSMISSION
     radio.stopListening();
-    bool ok = radio.write(&commands, sizeof(commands));
+    bool ok = radio.write(&secCmd, sizeof(SecureCommand));
 
     if (ok) {
       if (radio.isAckPayloadAvailable()) {
-        radio.read(&telemetry, sizeof(telemetry));
+        uint8_t len = radio.getDynamicPayloadSize();
+        if (len == sizeof(SecureTelemetry)) {
+          SecureTelemetry secTelem;
+          radio.read(&secTelem, sizeof(SecureTelemetry));
+          btea((uint32_t*)&secTelem, -7);
+          
+          uint16_t crc = calculateRadioCRC16((uint8_t*)&secTelem.telem, sizeof(secTelem.telem));
+          if (secTelem.magic == MAGIC_TELEM && secTelem.crc == crc) {
+            memcpy(telemetry, secTelem.telem, sizeof(telemetry));
 
-        latitude = telemetry[0];
-        longitude = telemetry[1];
-        yaw = telemetry[2];
-        altitude = telemetry[3];
-        pitch = telemetry[4];
-        gforce = telemetry[5];
+            latitude = telemetry[0];
+            longitude = telemetry[1];
+            yaw = telemetry[2];
+            altitude = telemetry[3];
+            pitch = telemetry[4];
+            gforce = telemetry[5];
 
         if (!originEstablished) {
           setOrigin(latitude, longitude, altitude);
@@ -716,6 +811,12 @@ void loop() {
           Serial.print(gforce, 2);
           Serial.println(" g");
           Serial.println("╚═══════════════════════════════════════╝");
+        }
+          }
+        } else {
+          // Flush invalid payload
+          uint8_t dummy[32];
+          radio.read(&dummy, len);
         }
       }
     }
