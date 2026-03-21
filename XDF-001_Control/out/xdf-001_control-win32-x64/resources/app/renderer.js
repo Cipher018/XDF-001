@@ -521,7 +521,8 @@ window.electronAPI.onTelemetryData((data) => {
         gforce,
         velocity_mag,
         currentMode,
-        cmd_throttle
+        cmd_throttle,
+        lossRate = 0
     } = data;
     
     const elapsedMs = Date.now() - appStartTime;
@@ -539,6 +540,17 @@ window.electronAPI.onTelemetryData((data) => {
     const powerPct = Math.round((cmd_throttle / 180) * 100);
     document.querySelector('#power .metric-value').innerHTML = `${powerPct} <span class="unit">%</span>`;
     document.querySelector('#gforce .metric-value').innerHTML = `${gforce.toFixed(2)} <span class="unit">g</span>`;
+    
+    // Update Signal Quality [F3]
+    const signalVal = document.getElementById('signal-quality-value');
+    const signalIcon = document.querySelector('#signal-strength-widget .icon');
+    if (signalVal && signalIcon) {
+        const quality = 100 - lossRate;
+        signalVal.innerText = `${quality}%`;
+        if (quality > 80) signalIcon.style.color = '#4caf50'; // Green
+        else if (quality > 40) signalIcon.style.color = '#ffeb3b'; // Yellow
+        else signalIcon.style.color = '#f44336'; // Red
+    }
 
     // Update Orientation
     document.getElementById('pitch').innerText = `${pitch.toFixed(1)}°`;
@@ -702,6 +714,7 @@ const configSections = {
     'poi-config': document.getElementById('poi-config'),
     'appearance-config': document.getElementById('appearance-config'),
     'language-config': document.getElementById('language-config'),
+    'calibration-config': document.getElementById('calibration-config'),
 };
 
 openConfigBtn.addEventListener('click', () => {
@@ -990,6 +1003,53 @@ document.getElementById('send-command-btn').addEventListener('click', async () =
 
     } catch (e) {
         console.error('sendCommand failed:', e);
+    }
+});
+
+// ── [F7] Apply Magnetic Declination ──
+document.getElementById('apply-declination-btn')?.addEventListener('click', async () => {
+    const dec = parseFloat(document.getElementById('declination-input').value);
+    if (isNaN(dec)) return;
+    
+    // We send a ConfigPacket with the current mission state but updated declination
+    const cfg = {
+        masterMode: selectedMode === 0 ? 1 : 2,
+        order: selectedMode === 0 ? 0 : selectedMode,
+        lat: parseFloat(document.getElementById('cmd-lat').value) || 0,
+        lon: parseFloat(document.getElementById('cmd-lon').value) || 0,
+        alt: parseFloat(document.getElementById('cmd-alt').value) || 100,
+        direction: selectedDirection,
+        radius: parseFloat(document.getElementById('cmd-radius')?.value) || 50,
+        declination: dec
+    };
+    
+    const result = await window.electronAPI.sendCommand(cfg);
+    if (result.success) showToast('Declination updated', 'success');
+});
+
+// ── [F2] Bulk Mission Upload ──
+document.getElementById('upload-mission')?.addEventListener('click', async () => {
+    if (waypoints.length === 0) {
+        showToast(t('noWaypointsExport'), 'warning');
+        return;
+    }
+    
+    const result = await window.electronAPI.uploadMission(waypoints);
+    if (result.success) {
+        showToast('Mission uploaded successfully', 'success');
+    } else {
+        showToast('Upload failed: ' + result.error, 'error');
+    }
+});
+
+// ── [F2] Clear Mission ──
+document.getElementById('clear-mission')?.addEventListener('click', () => {
+    if (confirm(t('confirmClear'))) {
+        waypoints.length = 0;
+        missionWpMarkers.forEach(m => missionMap.removeLayer(m));
+        missionWpMarkers.length = 0;
+        renderWaypoints();
+        showToast(t('missionCleared'), 'info');
     }
 });
 

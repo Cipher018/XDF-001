@@ -68,6 +68,9 @@ const byte pipeRX[6] = "TEL01"; // Telemetry In Pipe
 // ═══════════════════════════════════════════════════════
 // SEGURIDAD DE COMUNICACIONES (XXTEA)
 // ═══════════════════════════════════════════════════════
+// ⚠ SEGURIDAD: Clave XXTEA hardcodeada — SOLO PARA PROTOTIPO.
+// En producción, derivar de ESP.getEfuseMac() y almacenar en NVS cifrado.
+// Cualquier persona con acceso al binario puede extraer esta clave.
 uint32_t sharedKey[4] = { 0x58444630, 0x30314B45, 0x595F3230, 0x32362121 }; // "XDF001KEY_2026!!" en hex
 #define XXTEA_DELTA 0x9e3779b9
 #define XXTEA_MX (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((sum^y) + (sharedKey[(p&3)^e] ^ z)))
@@ -115,8 +118,14 @@ struct __attribute__((packed)) SecureCommand {
   uint8_t  magic;
   uint8_t  seq;
   uint16_t crc;
-  int16_t  commands[4];
-}; // 12 bytes
+  int16_t  targetRoll;
+  int16_t  targetPitch;
+  int16_t  targetYaw;
+  int16_t  targetThrottle;
+  float    homeLat;
+  float    homeLon;
+  uint16_t padding;
+}; // 24 bytes
 
 struct __attribute__((packed)) SecureTelemetry {
   uint8_t  magic;
@@ -383,11 +392,30 @@ ControlCommands generateWaypointCommands(NavigationResult analysis) {
   }
 
   const float KP_ROLL = 0.6f;
+  const float KI_ROLL = 0.05f;
+  const float MAX_WIND_COMP = 15.0f;
   const float KP_PITCH = 0.4f;
 
-  float desiredRoll = analysis.horizontalAngle * KP_ROLL;
-  desiredRoll = constrain(desiredRoll, 0, 45.0f);
-  cmd.roll = (int)(analysis.turnLeft ? desiredRoll : -desiredRoll);
+  static float rollIntegral = 0.0f;
+  static bool wasNearCapture = false;
+
+  // Detectar transición: si el ciclo anterior fue nearCapture
+  // y ahora ya no lo es, significa cambio de waypoint → reset integrador
+  if (wasNearCapture && !analysis.targetReached) {
+    rollIntegral = 0.0f;
+  }
+  wasNearCapture = analysis.targetReached;
+
+  if (!analysis.targetReached) {
+    float errorCmd = analysis.horizontalAngle * (analysis.turnLeft ? 1.0f : -1.0f);
+    rollIntegral += errorCmd * KI_ROLL * 0.05f;
+    rollIntegral = constrain(rollIntegral, -MAX_WIND_COMP, MAX_WIND_COMP);
+  }
+
+  float proportionalRoll = analysis.horizontalAngle * KP_ROLL * (analysis.turnLeft ? 1.0f : -1.0f);
+  float rollCmd = proportionalRoll + rollIntegral;
+  
+  cmd.roll = (int)constrain(rollCmd, -45.0f, 45.0f);
 
   float desiredPitch = analysis.verticalAngle * KP_PITCH;
   cmd.pitch = (int)constrain(desiredPitch, -20.0f, 20.0f);
@@ -740,13 +768,20 @@ void loop() {
     SecureCommand secCmd;
     secCmd.magic = MAGIC_CMD;
     secCmd.seq   = cmdSeq++;
-    secCmd.commands[0] = commands[0];
-    secCmd.commands[1] = commands[1];
-    secCmd.commands[2] = commands[2];
-    secCmd.commands[3] = commands[3];
-    secCmd.crc   = calculateRadioCRC16((uint8_t*)&secCmd.commands, sizeof(secCmd.commands));
+    secCmd.targetYaw      = commands[0];
+    secCmd.targetThrottle = commands[1];
+    secCmd.targetPitch    = commands[2];
+    secCmd.targetRoll     = commands[3];
     
-    btea((uint32_t*)&secCmd, 3); // Encrypt 12 bytes
+    secCmd.homeLat = originEstablished ? gpsOrigin.x : 0.0f;
+    secCmd.homeLon = originEstablished ? gpsOrigin.y : 0.0f;
+    secCmd.padding = 0;
+
+    // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
+    // Paso 1: CRC sobre datos en claro (antes de cifrar)
+    secCmd.crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 16);
+    // Paso 2: Cifrar paquete completo (CRC incluido)
+    btea((uint32_t*)&secCmd, 6); // Encrypt 24 bytes
 
     // TRANSMISSION
     radio.stopListening();
@@ -817,6 +852,33 @@ void loop() {
           // Flush invalid payload
           uint8_t dummy[32];
           radio.read(&dummy, len);
+        }
+      }
+    } else {
+      // ── Enlace perdido: Escuchar por posible SOS Beacon ──
+      radio.startListening();
+      unsigned long listenStart = millis();
+      // Escuchamos durante un breve periodo (30ms)
+      while (millis() - listenStart < 30) {
+        if (radio.available()) {
+          uint8_t len = radio.getDynamicPayloadSize();
+          if (len == sizeof(SecureSOS)) {
+            SecureSOS sos;
+            radio.read(&sos, sizeof(SecureSOS));
+            btea((uint32_t*)&sos, -4); // Decrypt 16 bytes
+            
+            uint16_t crc = calculateRadioCRC16((uint8_t*)&sos.lat, 10);
+            if (sos.magic == MAGIC_SOS && sos.crc == crc) {
+              char msg[128];
+              sprintf(msg, "!!! SOS BEACON !!! RUMBO: %.1f ULTIMA POSICION LAT: %.6f LON: %.6f", 
+                      sos.heading / 10.0f, sos.lat, sos.lon);
+              
+              Serial.println(msg); // Opcional serial print para debug local
+            }
+          } else {
+            uint8_t dummy[32];
+            radio.read(&dummy, len);
+          }
         }
       }
     }

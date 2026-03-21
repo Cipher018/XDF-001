@@ -1,8 +1,29 @@
-// Import libraries
-#include <Bluepad32.h>
-#include <RF24.h>
-#include <SPI.h>
 #include <nRF24L01.h>
+#include <Preferences.h> // [F5]
+
+// ── Global Mission State [F2] ──
+const int MAX_WAYPOINTS = 16;
+struct __attribute__((packed)) RouteWaypoint {
+  float lat;
+  float lon;
+  float alt;
+  uint8_t mode;      // 1=Waypoint, 2=Orbit
+  uint8_t direction; // 0=CCW, 1=CW
+  float radius;
+};
+RouteWaypoint waypointRoute[MAX_WAYPOINTS];
+int waypointCount = 0;
+int waypointIndex = 0;
+bool routeLoop     = false;
+
+// ── Link Quality Stats [F3] ──
+static uint8_t lastTelemSeq = 0;
+static uint32_t packetLossCount = 0;
+static uint32_t packetTotalCount = 0;
+uint8_t currentLossRate = 0;
+
+Preferences preferences;
+// uint32_t sharedKey[4] is defined below in security section
 
 // ═══════════════════════════════════════════════════════
 // BINARY SERIAL PROTOCOL
@@ -13,10 +34,12 @@ const uint8_t MAGIC_START = 0xAA;
 const uint8_t MAGIC_END = 0x55;
 
 // Packet types
-const uint8_t PKT_CONFIG = 0x01;    // PC -> ESP32 (configuration)
+const uint8_t PKT_CONFIG    = 0x01; // PC -> ESP32 (configuration)
 const uint8_t PKT_TELEMETRY = 0x02; // ESP32 -> PC (telemetry)
-const uint8_t PKT_ACK = 0x03;       // Bidirectional (acknowledgment)
-const uint8_t PKT_NACK = 0x04;      // Bidirectional (negative ack)
+const uint8_t PKT_ACK       = 0x03; // Bidirectional (acknowledgment)
+const uint8_t PKT_NACK      = 0x04; // Bidirectional (negative ack)
+const uint8_t PKT_MESSAGE   = 0x05; // ESP32 -> PC (String messages)
+const uint8_t PKT_ROUTE     = 0x06; // PC -> ESP32 (bulk waypoints) [F2]
 
 // Master mode values
 const uint8_t MASTER_DISCRETION = 0; // ESP32 decides (HID buttons)
@@ -40,8 +63,11 @@ struct __attribute__((packed)) ConfigPacket {
   float waypoint_lon; // Longitude (degrees)
   float waypoint_alt; // Altitude (meters)
   uint8_t direction;  // 0=CCW, 1=CW
-  float orbit_radius; // Radius (meters) [NEW]
+  float orbit_radius; // Radius (meters)
+  float declination;  // [F7] Degrees
 };
+
+// ... (AircraftTelemetry remains same)
 
 // Telemetry packet structure (ESP32 -> PC)
 // ── Paquete recibido desde CADI_A (24 bytes, optimizado) ──
@@ -57,7 +83,9 @@ struct __attribute__((packed)) AircraftTelemetry {
   int16_t velocityX;    // 2B — m/s × 100
   int16_t velocityY;    // 2B — m/s × 100
   int16_t velocityZ;    // 2B — m/s × 100
-};                      // Total: 24 bytes
+  uint8_t seq;          // 1B — Sequence [F3]
+  uint8_t _pad[3];      // 3B — padding: 25→28 bytes (múltiplo de 4 para XXTEA)
+};                      // Total: 28 bytes
 
 // ── Paquete enviado al PC via serial (telemetría completa) ──
 struct __attribute__((packed)) TelemetryPacket {
@@ -77,6 +105,7 @@ struct __attribute__((packed)) TelemetryPacket {
   int16_t cmd_throttle;
   int16_t cmd_pitch;
   int16_t cmd_roll;
+  uint8_t lossRate;     // 1B — 0-100% [F3]
 };
 
 // CRC16 calculation (CCITT)
@@ -135,11 +164,11 @@ bool sendTelemetryPacket(const TelemetryPacket &telem) {
   packet[idx++] = PKT_TELEMETRY;
   packet[idx++] = (uint8_t)payloadSize;
 
-  // Payload
+  // Payload — CRITICO: copiar antes de calcular CRC
   memcpy(&packet[idx], &telem, payloadSize);
   idx += payloadSize;
 
-  // CRC16 (over TYPE + LENGTH + PAYLOAD)
+  // CRC16 (sobre TYPE + LENGTH + PAYLOAD)
   uint16_t crc = calculateCRC16(&packet[1], 1 + 1 + payloadSize);
   packet[idx++] = (crc >> 8) & 0xFF; // CRC high byte
   packet[idx++] = crc & 0xFF;        // CRC low byte
@@ -152,39 +181,65 @@ bool sendTelemetryPacket(const TelemetryPacket &telem) {
   return true;
 }
 
+bool sendTextMessage(const char* msg) {
+  const size_t payloadSize = strlen(msg);
+  const size_t totalSize = 1 + 1 + 1 + payloadSize + 2 + 1;
+
+  uint8_t packet[totalSize];
+  size_t idx = 0;
+
+  packet[idx++] = MAGIC_START;
+  packet[idx++] = PKT_MESSAGE;
+  packet[idx++] = (uint8_t)payloadSize;
+
+  memcpy(&packet[idx], msg, payloadSize);
+  idx += payloadSize;
+
+  uint16_t crc = calculateCRC16(&packet[1], 1 + 1 + payloadSize);
+  packet[idx++] = (crc >> 8) & 0xFF;
+  packet[idx++] = crc & 0xFF;
+
+  packet[idx++] = MAGIC_END;
+
+  Serial.write(packet, totalSize);
+  return true;
+}
+
 bool parseConfigPacket(const uint8_t *payload, size_t length) {
   if (length != sizeof(ConfigPacket)) {
     return false;
   }
-
   memcpy(&lastConfig, payload, sizeof(ConfigPacket));
   configReceived = true;
+  return true;
+}
 
-  switch (lastConfig.masterMode) {
-  case MASTER_DISCRETION:
-    break;
-  case MASTER_MANUAL:
-    break;
-  case MASTER_AUTONOMOUS:
-    break;
-  default:
-    break;
+bool parseRoutePacket(const uint8_t *payload, size_t length) {
+  if (length < 1) return false;
+  
+  uint8_t count = payload[0];
+  if (count > MAX_WAYPOINTS) count = MAX_WAYPOINTS;
+  
+  size_t expectedLen = 1 + count * sizeof(RouteWaypoint);
+  if (length < expectedLen) return false;
+  
+  waypointCount = count;
+  waypointIndex = 0;
+  memcpy(waypointRoute, &payload[1], count * sizeof(RouteWaypoint));
+  
+  // Forzar primer waypoint de la ruta si estamos en modo autónomo
+  if (waypointCount > 0 && originEstablished) {
+     targetWaypoint = GPSToLocal(waypointRoute[0].lat, waypointRoute[0].lon, waypointRoute[0].alt);
+     // Si el primer modo es órbita, configurar también
+     if (waypointRoute[0].mode == ORDER_ORBIT) {
+        orbitCenter = targetWaypoint;
+        orbitAltitude = waypointRoute[0].alt;
+        orbitClockwise = (waypointRoute[0].direction == DIR_CW);
+        orbitRadius = max(waypointRoute[0].radius, 10.0f);
+        resetOrbitSystem();
+     }
   }
-
-  if (lastConfig.masterMode == MASTER_AUTONOMOUS) {
-    switch (lastConfig.order) {
-    case ORDER_WAYPOINT:
-      break;
-    case ORDER_ORBIT:
-      break;
-    default:
-      break;
-    }
-
-    if (lastConfig.order == ORDER_ORBIT) {
-    }
-  }
-
+  
   return true;
 }
 
@@ -263,6 +318,10 @@ void processSerialPacket() {
     success = true;
     break;
 
+  case PKT_ROUTE:
+    success = parseRoutePacket(&serialBuffer[3], length);
+    break;
+
   default:
     break;
   }
@@ -286,7 +345,68 @@ void processSerialPacket() {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════
+// SET_KEY HANDLER [F5]
+// Parsea comandos seriales de texto con formato:
+//   SET_KEY:16characterkey
+// Almacena la clave en NVS y reinicia el dispositivo.
+// Protocolo: texto plano (no binario) para facilitar
+// el pareado desde cualquier terminal serial.
+// ═══════════════════════════════════════════════════════
+
+static char setKeyLineBuf[32];
+static uint8_t setKeyLineIdx = 0;
+
+void handleSetKeyCommand(const char* line) {
+  // Verificar prefijo SET_KEY:
+  if (strncmp(line, "SET_KEY:", 8) != 0) return;
+
+  const char* keyStr = line + 8;
+  size_t keyLen = strlen(keyStr);
+
+  // Rellenar con ceros o truncar a exactamente 16 bytes
+  uint8_t keyBytes[16] = {0};
+  size_t copyLen = keyLen < 16 ? keyLen : 16;
+  memcpy(keyBytes, keyStr, copyLen);
+
+  // Guardar en NVS
+  Preferences prefs;
+  prefs.begin("pairing", false); // read-write
+  prefs.putBytes("shared_key", keyBytes, 16);
+  prefs.end();
+
+  // Confirmar y reiniciar
+  sendTextMessage("[SEC] New key stored in NVS. Restarting...");
+  delay(200);
+  ESP.restart();
+}
+
+void parseSetKeySerial() {
+  // Lee Serial byte a byte buscando lineas de texto (terminadas en '\n')
+  // Solo actua si el byte NO es el magic binario (0xAA),
+  // evitando conflicto con el parser binario.
+  while (Serial.available()) {
+    char ch = (char)Serial.peek();
+    // Si el byte es el magic binario, dejar al parser binario manejarlo
+    if ((uint8_t)ch == MAGIC_START) break;
+    Serial.read(); // consumir
+    if (ch == '\n' || ch == '\r') {
+      if (setKeyLineIdx > 0) {
+        setKeyLineBuf[setKeyLineIdx] = '\0';
+        handleSetKeyCommand(setKeyLineBuf);
+        setKeyLineIdx = 0;
+      }
+    } else if (setKeyLineIdx < 30) {
+      setKeyLineBuf[setKeyLineIdx++] = ch;
+    }
+  }
+}
+
 void updateSerialParser() {
+  // Parsear comandos de texto SET_KEY antes del parser binario
+  parseSetKeySerial();
+
   // Read available serial data
   while (Serial.available() && serialBufferIndex < SERIAL_BUFFER_SIZE) {
     serialBuffer[serialBufferIndex++] = Serial.read();
@@ -303,68 +423,7 @@ void updateSerialParser() {
   }
 }
 
-void applySerialConfiguration() {
-  if (!configReceived)
-    return;
-
-  static uint8_t lastMasterMode = MASTER_DISCRETION;
-  static uint8_t lastOrder = ORDER_NONE;
-
-  // Check if configuration changed
-  bool modeChanged = (lastConfig.masterMode != lastMasterMode);
-  bool orderChanged = (lastConfig.order != lastOrder);
-
-  if (!modeChanged && !orderChanged)
-    return;
-
-  // Apply master mode
-  switch (lastConfig.masterMode) {
-  case MASTER_DISCRETION:
-    // Do nothing - HID buttons control mode
-    break;
-
-  case MASTER_MANUAL:
-    if (modeChanged) {
-      currentMode = MODE_MANUAL;
-      resetOrbitSystem();
-    }
-    break;
-
-  case MASTER_AUTONOMOUS:
-    if (modeChanged || orderChanged) {
-      // Convert GPS coordinates to local waypoint
-      if (originEstablished) {
-        Vector3D localWaypoint =
-            GPSToLocal(lastConfig.waypoint_lat, lastConfig.waypoint_lon,
-                       lastConfig.waypoint_alt);
-
-        switch (lastConfig.order) {
-        case ORDER_WAYPOINT:
-          targetWaypoint = localWaypoint;
-          currentMode = MODE_WAYPOINT;
-          break;
-
-        case ORDER_ORBIT:
-          orbitCenter    = localWaypoint;
-          orbitAltitude  = lastConfig.waypoint_alt;
-          orbitClockwise = (lastConfig.direction == DIR_CW);
-          orbitRadius    = max(lastConfig.orbit_radius, 10.0f); // mínimo 10m
-          resetOrbitSystem();
-          currentMode = MODE_ORBIT;
-          break;
-
-        default:
-          break;
-        }
-      } else {
-      }
-    }
-    break;
-  }
-
-  lastMasterMode = lastConfig.masterMode;
-  lastOrder = lastConfig.order;
-}
+// [Moved applySerialConfiguration to bottom]
 
 // ═══════════════════════════════════════════════════════
 // VECTORS CLASS
@@ -430,6 +489,9 @@ const byte pipeRX[6] = "TEL01"; // Telemetry In Pipe
 // ═══════════════════════════════════════════════════════
 // SEGURIDAD DE COMUNICACIONES (XXTEA)
 // ═══════════════════════════════════════════════════════
+// ⚠ SEGURIDAD: Clave XXTEA hardcodeada — SOLO PARA PROTOTIPO.
+// En producción, derivar de ESP.getEfuseMac() y almacenar en NVS cifrado.
+// Cualquier persona con acceso al binario puede extraer esta clave.
 uint32_t sharedKey[4] = { 0x58444630, 0x30314B45, 0x595F3230, 0x32362121 }; // "XDF001KEY_2026!!" en hex
 #define XXTEA_DELTA 0x9e3779b9
 #define XXTEA_MX (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((sum^y) + (sharedKey[(p&3)^e] ^ z)))
@@ -477,8 +539,14 @@ struct __attribute__((packed)) SecureCommand {
   uint8_t  magic;
   uint8_t  seq;
   uint16_t crc;
-  int16_t  commands[4];
-}; // 12 bytes
+  int16_t  targetRoll;
+  int16_t  targetPitch;
+  int16_t  targetYaw;
+  int16_t  targetThrottle;
+  float    homeLat;
+  float    homeLon;
+  int16_t  declinationX10; // [F7] Replaces padding
+}; // 24 bytes
 
 struct __attribute__((packed)) SecureTelemetry {
   uint8_t  magic;
@@ -576,6 +644,8 @@ Vector3D GPSToLocal(float lat, float lon, float alt) {
 // ── Constantes de navegación ─────────────────────────
 const float STALL_SPEED       = 5.0f;    // m/s — velocidad mínima de control
 const float KP_ROLL           = 0.6f;    // ganancia proporcional roll
+const float KI_ROLL           = 0.05f;   // ganancia integral mitigación viento
+const float MAX_WIND_COMP     = 15.0f;   // grados máximos mitigación de viento cruzado
 const float KP_PITCH          = 0.5f;    // ganancia proporcional pitch
 const float KP_YAW            = 0.3f;    // ganancia proporcional yaw (suave)
 const float K_L1              = 3.0f;    // multiplicador L1: L1_dist = K_L1 * |V|
@@ -713,12 +783,28 @@ ControlCommands generateWaypointCommands(NavigationResult nav, float currentRoll
   //    Factor de suavizado: 0.5 entre 8m y 15m, 1.0 fuera de 15m
   float captureFactor = nav.farCapture ? 0.5f : 1.0f;
 
-  // ── Roll ─────────────────────────────────────────
+  // ── Roll (Con Integrador de Viento Cruzado) ──────
   //    θ_h * KP_ROLL * factor_L1 * factor_captura * signo
-  float rollCmd = nav.horizontalAngle * KP_ROLL
-                * nav.l1Factor
-                * captureFactor
-                * (float)nav.turnSign;
+  static float rollIntegral = 0.0f;
+  static bool wasNearCapture = false;
+
+  // Detectar transición: si el ciclo anterior fue nearCapture
+  // y ahora ya no lo es, significa cambio de waypoint → reset integrador
+  if (wasNearCapture && !nav.nearCapture) {
+    rollIntegral = 0.0f;
+  }
+  wasNearCapture = nav.nearCapture;
+
+  if (!nav.nearCapture) {
+    // Calculamos el error direccional puro
+    float errorCmd = nav.horizontalAngle * (float)nav.turnSign;
+    // Acumulamos (dt base asume ~20Hz, 0.05s)
+    rollIntegral += errorCmd * KI_ROLL * 0.05f;
+    rollIntegral = constrain(rollIntegral, -MAX_WIND_COMP, MAX_WIND_COMP);
+  }
+
+  float proportionalRoll = nav.horizontalAngle * KP_ROLL * (float)nav.turnSign;
+  float rollCmd = (proportionalRoll + rollIntegral) * nav.l1Factor * captureFactor;
   cmd.roll = (int)constrain(rollCmd, -45.0f, 45.0f);
 
   // ── Pitch adaptativo ─────────────────────────────
@@ -1064,6 +1150,83 @@ void onConnectedController(ControllerPtr ctl) { myControllers[0] = ctl; }
 void onDisconnectedController(ControllerPtr ctl) { myControllers[0] = nullptr; }
 
 // ═══════════════════════════════════════════════════════
+// MANUAL PROTOTYPES TO FIX ARDUINO IDE BUILDER
+// ═══════════════════════════════════════════════════════
+Vector3D GPSToLocal(float lat, float lon, float alt);
+NavigationResult analyzeNavigation(AircraftState state, Vector3D target);
+ControlCommands generateWaypointCommands(NavigationResult nav, float currentRoll);
+int findBestEntryPoint(AircraftState state);
+float calculateRadiusError(Vector3D position);
+ControlCommands generateOrbitCommands(AircraftState state);
+
+// ═══════════════════════════════════════════════════════
+// SERIAL CONFIGURATION
+// ═══════════════════════════════════════════════════════
+
+void applySerialConfiguration() {
+  if (!configReceived)
+    return;
+
+  static uint8_t lastMasterMode = MASTER_DISCRETION;
+  static uint8_t lastOrder = ORDER_NONE;
+
+  // Check if configuration changed
+  bool modeChanged = (lastConfig.masterMode != lastMasterMode);
+  bool orderChanged = (lastConfig.order != lastOrder);
+
+  if (!modeChanged && !orderChanged)
+    return;
+
+  // Apply master mode
+  switch (lastConfig.masterMode) {
+  case MASTER_DISCRETION:
+    // Do nothing - HID buttons control mode
+    break;
+
+  case MASTER_MANUAL:
+    if (modeChanged) {
+      currentMode = MODE_MANUAL;
+      resetOrbitSystem();
+    }
+    break;
+
+  case MASTER_AUTONOMOUS:
+    if (modeChanged || orderChanged) {
+      // Convert GPS coordinates to local waypoint
+      if (originEstablished) {
+        Vector3D localWaypoint =
+            GPSToLocal(lastConfig.waypoint_lat, lastConfig.waypoint_lon,
+                       lastConfig.waypoint_alt);
+
+        switch (lastConfig.order) {
+        case ORDER_WAYPOINT:
+          targetWaypoint = localWaypoint;
+          currentMode = MODE_WAYPOINT;
+          break;
+
+        case ORDER_ORBIT:
+          orbitCenter    = localWaypoint;
+          orbitAltitude  = lastConfig.waypoint_alt;
+          orbitClockwise = (lastConfig.direction == DIR_CW);
+          orbitRadius    = max(lastConfig.orbit_radius, 10.0f); // mínimo 10m
+          resetOrbitSystem();
+          currentMode = MODE_ORBIT;
+          break;
+
+        default:
+          break;
+        }
+      } else {
+      }
+    }
+    break;
+  }
+
+  lastMasterMode = lastConfig.masterMode;
+  lastOrder = lastConfig.order;
+}
+
+// ═══════════════════════════════════════════════════════
 // SETUP
 // ═══════════════════════════════════════════════════════
 
@@ -1091,6 +1254,15 @@ void setup() {
 
   BP32.setup(&onConnectedController, &onDisconnectedController);
   BP32.forgetBluetoothKeys();
+
+  // ── Cargado de Clave NVS (F5) ──────────────────
+  preferences.begin("pairing", true); // Modo read-only
+  if (preferences.isKey("shared_key")) {
+     uint8_t nvsKey[16];
+     preferences.getBytes("shared_key", nvsKey, 16);
+     memcpy(sharedKey, nvsKey, 16);
+  }
+  preferences.end();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1103,6 +1275,17 @@ void loop() {
 
   // Apply serial configuration if received
   applySerialConfiguration();
+
+  // ── GEOFENCE (F1) ────────────────────────────────
+  if (originEstablished) {
+    float hDist = sqrtf(aircraft.position.x * aircraft.position.x + aircraft.position.y * aircraft.position.y);
+    if (hDist > 1800.0f) {
+       if (currentMode != MODE_WAYPOINT || targetWaypoint.magnitude() > 1.0f) {
+         currentMode = MODE_WAYPOINT;
+         targetWaypoint = Vector3D(0, 0, orbitAltitude); // Regreso al origen
+       }
+    }
+  }
 
   bool dataUpdated = BP32.update();
 
@@ -1134,6 +1317,29 @@ void loop() {
     switch (currentMode) {
     case MODE_WAYPOINT: {
       NavigationResult nav = analyzeNavigation(aircraft, targetWaypoint);
+      
+      // AVANCE DE WAYPOINT (F2)
+      if (nav.nearCapture && waypointCount > 0) {
+          waypointIndex++;
+          if (waypointIndex >= waypointCount) {
+             waypointIndex = routeLoop ? 0 : waypointCount - 1;
+          }
+          
+          RouteWaypoint nextWP = waypointRoute[waypointIndex];
+          targetWaypoint = GPSToLocal(nextWP.lat, nextWP.lon, nextWP.alt);
+          
+          if (nextWP.mode == ORDER_ORBIT) {
+             orbitCenter   = targetWaypoint;
+             orbitAltitude = nextWP.alt;
+             orbitClockwise= (nextWP.direction == DIR_CW);
+             orbitRadius   = max(nextWP.radius, 10.0f);
+             resetOrbitSystem();
+             currentMode = MODE_ORBIT;
+          }
+          // Recalcular nav para el nuevo waypoint
+          nav = analyzeNavigation(aircraft, targetWaypoint);
+      }
+      
       cmd = generateWaypointCommands(nav, aircraft.roll);
       break;
     }
@@ -1163,13 +1369,21 @@ void loop() {
     SecureCommand secCmd;
     secCmd.magic = MAGIC_CMD;
     secCmd.seq   = cmdSeq++;
-    secCmd.commands[0] = commands[0];
-    secCmd.commands[1] = commands[1];
-    secCmd.commands[2] = commands[2];
-    secCmd.commands[3] = commands[3];
-    secCmd.crc   = calculateRadioCRC16((uint8_t*)&secCmd.commands, sizeof(secCmd.commands));
+          secCmd.targetYaw      = commands[0];
+          secCmd.targetThrottle = commands[1];
+          secCmd.targetPitch    = commands[2];
+          secCmd.targetRoll     = commands[3];
+          secCmd.declinationX10 = (int16_t)(lastConfig.declination * 10.0f); // [F7]
     
-    btea((uint32_t*)&secCmd, 3); // Encrypt 12 bytes
+    secCmd.homeLat = originEstablished ? gpsOrigin.x : 0.0f;
+    secCmd.homeLon = originEstablished ? gpsOrigin.y : 0.0f;
+    // secCmd.padding eliminado — reemplazado por declinationX10 [F7]
+
+    // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
+    // Paso 1: CRC sobre datos en claro (antes de cifrar)
+    secCmd.crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 16);
+    // Paso 2: Cifrar paquete completo (CRC incluido)
+    btea((uint32_t*)&secCmd, 6); // Encrypt 24 bytes (6 words)
 
     // TRANSMISSION
     radio.stopListening();
@@ -1181,7 +1395,7 @@ void loop() {
         if (len == sizeof(SecureTelemetry)) {
           SecureTelemetry secTelem;
           radio.read(&secTelem, sizeof(SecureTelemetry));
-          btea((uint32_t*)&secTelem, -7); // Decrypt 28 bytes
+          btea((uint32_t*)&secTelem, -8); // Decrypt 32 bytes (SecureTelemetry)
           
           uint16_t crc = calculateRadioCRC16((uint8_t*)&secTelem.telem, sizeof(AircraftTelemetry));
           if (secTelem.magic == MAGIC_TELEM && secTelem.crc == crc) {
@@ -1195,6 +1409,25 @@ void loop() {
             pitch     = aircraftTelem.pitch     / 10.0f;
             roll      = aircraftTelem.roll      / 10.0f;
             gforce    = aircraftTelem.gforce    / 100.0f;
+
+            // ── CÁLCULO DE CALIDAD DE ENLACE (F3) ────────
+            packetTotalCount++;
+            if (lastTelemSeq != 0) {
+              uint8_t expected = lastTelemSeq + 1;
+              if (aircraftTelem.seq != expected) {
+                int lost = (int)aircraftTelem.seq - (int)expected;
+                if (lost < 0) lost += 256;
+                packetLossCount += lost;
+                packetTotalCount += lost;
+              }
+            }
+            lastTelemSeq = aircraftTelem.seq;
+            currentLossRate = (uint8_t)((packetLossCount * 100) / packetTotalCount);
+            // Reset periódico para estadísticas locales
+            if (packetTotalCount > 1000) {
+               packetTotalCount = 0;
+               packetLossCount = 0;
+            }
 
         // ── Velocidad directamente desde CADI_A ─────
         // Eliminado: calculateVelocity() — ya no se calcula aquí
@@ -1235,6 +1468,7 @@ void loop() {
           telemPkt.cmd_throttle = commands[1];
           telemPkt.cmd_pitch    = commands[2];
           telemPkt.cmd_roll     = commands[3];
+          telemPkt.lossRate     = currentLossRate; // [F3]
 
           sendTelemetryPacket(telemPkt);
         }
@@ -1248,5 +1482,5 @@ void loop() {
     }
   }
 
-  delay(50);
+  delay(50); // Mantenemos el ciclo a 20Hz
 }

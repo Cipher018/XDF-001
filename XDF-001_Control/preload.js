@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Mission
   exportMission: (data) => ipcRenderer.invoke('export-mission', data),
   importMission: () => ipcRenderer.invoke('import-mission'),
+  uploadMission: (waypoints) => ipcRenderer.invoke('upload-mission', waypoints),
   
   // Stats
   getPacketStats: () => ipcRenderer.invoke('get-packet-stats'),

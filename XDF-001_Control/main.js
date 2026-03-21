@@ -248,7 +248,7 @@ async function connectSerialInternal(portPath, baudRate) {
       const calculatedCRC = calculateCRC16(serialBuffer, 1, 1 + 1 + len);
 
       if (receivedCRC === calculatedCRC) {
-        if (type === 0x02 && len === 49) {
+        if (type === 0x02 && len === 50) {
           const offset = 3;
           const telemetryData = {
             latitude: serialBuffer.readFloatLE(offset),
@@ -265,7 +265,8 @@ async function connectSerialInternal(portPath, baudRate) {
             cmd_yaw: serialBuffer.readInt16LE(offset + 41),
             cmd_throttle: serialBuffer.readInt16LE(offset + 43),
             cmd_pitch: serialBuffer.readInt16LE(offset + 45),
-            cmd_roll: serialBuffer.readInt16LE(offset + 47)
+            cmd_roll: serialBuffer.readInt16LE(offset + 47),
+            lossRate: serialBuffer.readUInt8(offset + 49)
           };
 
           // Validate before sending to renderer
@@ -410,7 +411,7 @@ ipcMain.handle("send-command", async (event, cfg) => {
       return { success: false, error: "Invalid coordinates" };
     }
 
-    const payload = Buffer.alloc(19);
+    const payload = Buffer.alloc(23);
     payload.writeUInt8(cfg.masterMode,  0);
     payload.writeUInt8(cfg.order,       1);
     payload.writeFloatLE(cfg.lat,       2);
@@ -418,6 +419,7 @@ ipcMain.handle("send-command", async (event, cfg) => {
     payload.writeFloatLE(cfg.alt,      10);
     payload.writeUInt8(cfg.direction,  14);
     payload.writeFloatLE(cfg.radius,   15);
+    payload.writeFloatLE(cfg.declination || -6.0, 19);
 
     const len = payload.length;
     const packet = Buffer.alloc(1 + 1 + 1 + len + 2 + 1);
@@ -440,6 +442,63 @@ ipcMain.handle("send-command", async (event, cfg) => {
     return { success: true };
   } catch (error) {
     logMessage('ERROR', 'Send command failed', { error: error.message });
+    return { success: false, error: error.message };
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// TX: upload-mission  (PC → CADI_G via serial) [F2]
+// ═══════════════════════════════════════════════════════
+const PKT_ROUTE = 0x06;
+
+ipcMain.handle("upload-mission", async (event, waypoints) => {
+  if (!port || !port.isOpen) {
+    return { success: false, error: "Serial port not open" };
+  }
+
+  try {
+    const count = waypoints.length;
+    if (count === 0) return { success: false, error: "No waypoints to upload" };
+    if (count > 16) return { success: false, error: "Max 16 waypoints allowed" };
+
+    const wpSize = 18; // lat(4), lon(4), alt(4), mode(1), dir(1), radius(4)
+    const payloadLen = 1 + (count * wpSize);
+    const payload = Buffer.alloc(payloadLen);
+    
+    payload.writeUInt8(count, 0);
+    
+    for (let i = 0; i < count; i++) {
+        const wp = waypoints[i];
+        const base = 1 + (i * wpSize);
+        payload.writeFloatLE(wp.lat,        base);
+        payload.writeFloatLE(wp.lon,        base + 4);
+        payload.writeFloatLE(wp.alt,        base + 8);
+        payload.writeUInt8(wp.mode || 1,    base + 12);
+        payload.writeUInt8(wp.direction || 0, base + 13);
+        payload.writeFloatLE(wp.radius || 30.0, base + 14);
+    }
+
+    const packetLen = 1 + 1 + 1 + payloadLen + 2 + 1;
+    const packet = Buffer.alloc(packetLen);
+    let idx = 0;
+    packet[idx++] = MAGIC_START;
+    packet[idx++] = PKT_ROUTE;
+    packet[idx++] = payloadLen;
+    payload.copy(packet, idx); idx += payloadLen;
+
+    const crc = calculateCRC16(packet, 1, 1 + 1 + payloadLen);
+    packet[idx++] = (crc >> 8) & 0xFF;
+    packet[idx++] =  crc       & 0xFF;
+    packet[idx++] = MAGIC_END;
+
+    await new Promise((resolve, reject) => {
+      port.write(packet, (err) => { err ? reject(err) : resolve(); });
+    });
+
+    logMessage('INFO', 'Mission uploaded', { waypoints: count });
+    return { success: true };
+  } catch (error) {
+    logMessage('ERROR', 'Upload mission failed', { error: error.message });
     return { success: false, error: error.message };
   }
 });

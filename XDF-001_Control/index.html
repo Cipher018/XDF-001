@@ -37,6 +37,10 @@
             <p>"The skies are ours to protect"</p>
           </div>
           <div class="status-right" id="header-status-area">
+             <div class="signal-strength" id="signal-strength-widget" title="Link Quality" style="display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 15px; margin-right: 10px;">
+               <span class="icon" style="font-size: 18px; color: #4caf50;">signal_cellular_alt</span>
+               <span id="signal-quality-value" style="font-weight: bold; color: #eee;">100%</span>
+             </div>
              <div id="offline-header-msg" class="offline-header-text"></div>
           </div>
         </div>
@@ -443,6 +447,7 @@
             <button type="button" class="tab-btn active" data-config-target="poi-config">Points of Interest</button>
             <button type="button" class="tab-btn" data-config-target="appearance-config">Appearance</button>
             <button type="button" class="tab-btn" data-config-target="language-config">Language</button>
+            <button type="button" class="tab-btn" data-config-target="calibration-config">Calibration</button>
           </div>
 
           <!-- POI Section -->

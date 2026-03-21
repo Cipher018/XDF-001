@@ -1,6 +1,7 @@
+#include <mpu9250.h>
+#include <Preferences.h> // [F5] NVS key storage
 #include <Adafruit_PWMServoDriver.h>
 #include <ESP32Servo.h>
-#include <MPU9250.h>
 #include <RF24.h>
 #include <SPI.h>
 #include <TinyGPSPlus.h>
@@ -27,7 +28,9 @@ struct __attribute__((packed)) TelemetryPacket {
   int16_t velocityX;    // 2B — m/s × 100    (−5000 a +5000 → ±50 m/s)
   int16_t velocityY;    // 2B — m/s × 100
   int16_t velocityZ;    // 2B — m/s × 100
-};                      // Total: 24 bytes ✓
+  uint8_t seq;          // 1B — Contador incremental para detectar pérdida [F3]
+  uint8_t _pad[3];      // 3B — padding: 25→28 bytes (múltiplo de 4 para XXTEA)
+};                      // Total: 28 bytes ✓
 
 TelemetryPacket telemPkt;
 
@@ -166,7 +169,7 @@ int servo5Pos = 90, servo6Pos = 90, servo7Pos = 90, servo8Pos = 90;
 
 // --- Sensors ---
 TinyGPSPlus gps;
-MPU9250     mpu;
+bfs::Mpu9250  mpu;
 
 #define GPS_SERIAL Serial2
 #define GPS_RX 17
@@ -182,6 +185,9 @@ const byte pipeTX[6] = "TEL01";
 // ═══════════════════════════════════════════════════════
 // SEGURIDAD DE COMUNICACIONES (XXTEA)
 // ═══════════════════════════════════════════════════════
+// ⚠ SEGURIDAD: Clave XXTEA hardcodeada — SOLO PARA PROTOTIPO.
+// En producción, derivar de ESP.getEfuseMac() y almacenar en NVS cifrado.
+// Cualquier persona con acceso al binario puede extraer esta clave.
 uint32_t sharedKey[4] = { 0x58444630, 0x30314B45, 0x595F3230, 0x32362121 }; // "XDF001KEY_2026!!" en hex
 #define XXTEA_DELTA 0x9e3779b9
 #define XXTEA_MX (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((sum^y) + (sharedKey[(p&3)^e] ^ z)))
@@ -229,19 +235,35 @@ struct __attribute__((packed)) SecureCommand {
   uint8_t  magic;
   uint8_t  seq;
   uint16_t crc;
-  int16_t  commands[4];
-}; // 12 bytes (3 words)
+  int16_t  targetRoll;
+  int16_t  targetPitch;
+  int16_t  targetYaw;
+  int16_t  targetThrottle;
+  float    homeLat;
+  float    homeLon;
+  int16_t  declinationX10; // [F7] Replaces padding
+}; // 24 bytes
 
 struct __attribute__((packed)) SecureTelemetry {
   uint8_t  magic;
   uint8_t  seq;
   uint16_t crc;
   TelemetryPacket telem;
-}; // 28 bytes (7 words)
+}; // 28 bytes
 
 SecureCommand   secCmd;
 SecureTelemetry secTelem;
 uint8_t         telemSeq = 0;
+
+// ── Target Angles from Ground Station ──
+int16_t targetRoll     = 0;
+int16_t targetPitch    = 0;
+int16_t targetYaw      = 0;
+int16_t targetThrottle = 0;
+
+// ── Home Coordinates for RTL ──
+float homeLat = 0.0f;
+float homeLon = 0.0f;
 
 uint16_t calculateRadioCRC16(const uint8_t *data, size_t length) {
   uint16_t crc = 0xFFFF;
@@ -297,14 +319,81 @@ bool firstGPSFix = true;
 // Timestamp IMU para dt preciso
 unsigned long lastIMUTime = 0;
 
+// Declinación magnética para corrección del Yaw [F7]
+float magneticDeclinationDeg = -6.0f; 
+
+// ═══════════════════════════════════════════════════════
+// FLY-BY-WIRE & PID (LAZO INTERNO)
+// ═══════════════════════════════════════════════════════
+
+class SlewLimiter {
+  float current;
+  float maxRate; 
+public:
+  SlewLimiter(float rate) : current(0), maxRate(rate) {}
+  float update(float target, float dt) {
+    float delta = target - current;
+    float maxDelta = maxRate * dt;
+    if (delta > maxDelta) current += maxDelta;
+    else if (delta < -maxDelta) current -= maxDelta;
+    else current = target;
+    return current;
+  }
+};
+
+class PIDController {
+public:
+  float kp, ki, kd;
+  float integralMax;
+  float integral;
+  float lastMeasured;
+  bool firstRun;
+
+  PIDController(float p, float i, float d, float iMax) : 
+    kp(p), ki(i), kd(d), integralMax(iMax), integral(0), lastMeasured(0), firstRun(true) {}
+
+  float compute(float setpoint, float measured, float dt) {
+    if (firstRun) {
+      lastMeasured = measured;
+      firstRun = false;
+    }
+    
+    float error = setpoint - measured;
+    float pOut = kp * error;
+    
+    integral += error * dt;
+    if (integral > integralMax) integral = integralMax;
+    else if (integral < -integralMax) integral = -integralMax;
+    float iOut = ki * integral;
+    
+    float dMeasured = (measured - lastMeasured) / dt;
+    float dOut = -kd * dMeasured;
+    lastMeasured = measured;
+    
+    return pOut + iOut + dOut;
+  }
+};
+
+// ── Controladores ──
+// Limitadores de Joystick: máx 90 grados por segundo de cambio de target
+SlewLimiter slewRoll(90.0f); 
+SlewLimiter slewPitch(90.0f);
+
+// PID: prioriza amortiguado derivativo
+PIDController pidRoll(1.2f, 0.1f, 0.2f, 20.0f);
+PIDController pidPitch(1.5f, 0.1f, 0.2f, 20.0f);
+
 void pushTelemetryAck() {
+  telemPkt.seq++; // [F3] Incrementar secuencia para loss_rate en PC
   updateTelemetry();
   secTelem.magic = MAGIC_TELEM;
   secTelem.seq   = telemSeq++;
   secTelem.telem = telemPkt;
+  // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
+  // Paso 1: CRC sobre datos en claro (antes de cifrar)
   secTelem.crc   = calculateRadioCRC16((uint8_t*)&secTelem.telem, sizeof(TelemetryPacket));
-  
-  btea((uint32_t*)&secTelem, 7); // Encrypt 7 words (28 bytes)
+  // Paso 2: Cifrar paquete completo (CRC incluido)
+  btea((uint32_t*)&secTelem, 8); // Encrypt 8 words (32 bytes: SecureTelemetry)
   radio.writeAckPayload(1, &secTelem, sizeof(SecureTelemetry));
 }
 
@@ -319,27 +408,28 @@ void setup() {
   Wire.begin(21, 22);
   Wire.setClock(400000);
 
+  mpu.Config(&Wire, bfs::Mpu9250::I2C_ADDR_PRIM);
+
   int mpuRetries = 10;
-  while (mpu.begin() < 0 && mpuRetries > 0) {
+  while (!mpu.Begin() && mpuRetries > 0) {
     delay(100);
     mpuRetries--;
   }
   imuActive = (mpuRetries > 0);
 
   if (imuActive) {
-    mpu.setAccelRange(MPU9250::ACCEL_RANGE_8G);
-    mpu.setGyroRange(MPU9250::GYRO_RANGE_500DPS);
-    mpu.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_20HZ);
-    mpu.setSrd(19);   // ~50Hz
+    mpu.ConfigAccelRange(bfs::Mpu9250::ACCEL_RANGE_8G);
+    mpu.ConfigGyroRange(bfs::Mpu9250::GYRO_RANGE_500DPS);
+    mpu.ConfigDlpfBandwidth(bfs::Mpu9250::DLPF_BANDWIDTH_20HZ);
+    mpu.ConfigSrd(19);   // ~50Hz
 
     delay(1000);
-    mpu.calibrateGyro();
 
     // Inicializar Kalman con primera lectura del acelerómetro
-    mpu.readSensor();
-    float ax = mpu.getAccelX_mss();
-    float ay = mpu.getAccelY_mss();
-    float az = mpu.getAccelZ_mss();
+    mpu.Read();
+    float ax = mpu.accel_x_mps2();
+    float ay = mpu.accel_y_mps2();
+    float az = mpu.accel_z_mps2();
     float initPitch = atan2f(ay, sqrtf(ax*ax + az*az)) * 57.2958f;
     float initRoll  = atan2f(-ax, az) * 57.2958f;
     kalmanPitch.setAngle(initPitch);
@@ -357,72 +447,224 @@ void setup() {
   radio.setPALevel(RF24_PA_LOW);
   radio.startListening();
 
+  // ── 4. Configuración nRF24L01 ────────────────── [F5]
+  Preferences preferences;
+  preferences.begin("pairing", false);
+  if (preferences.isKey("shared_key")) {
+    preferences.getBytes("shared_key", sharedKey, 16);
+  }
+  // Para pareado inicial, se puede usar un comando serial SET_KEY
+  preferences.end();
+
   pushTelemetryAck();
   lastRFTime = millis();
+}
+
+
+// ═══════════════════════════════════════════════════════
+// SET_KEY HANDLER [F5] — CADI_A
+// Mismo protocolo que CADI_G:
+//   SET_KEY:16characterkey  (via terminal serial USB)
+// Almacena en NVS y reinicia.
+// ═══════════════════════════════════════════════════════
+
+static char setKeyLineBuf[32];
+static uint8_t setKeyLineIdx = 0;
+
+void handleSetKeyCommand(const char* line) {
+  if (strncmp(line, "SET_KEY:", 8) != 0) return;
+
+  const char* keyStr = line + 8;
+  size_t keyLen = strlen(keyStr);
+
+  uint8_t keyBytes[16] = {0};
+  size_t copyLen = keyLen < 16 ? keyLen : 16;
+  memcpy(keyBytes, keyStr, copyLen);
+
+  Preferences prefs;
+  prefs.begin("pairing", false);
+  prefs.putBytes("shared_key", keyBytes, 16);
+  prefs.end();
+
+  // Aplicar inmediatamente sin esperar reinicio
+  memcpy(sharedKey, keyBytes, 16);
+
+  Serial.println("[SEC] New key stored in NVS. Restarting...");
+  delay(200);
+  ESP.restart();
+}
+
+void parseSetKeySerial() {
+  while (Serial.available()) {
+    char ch = (char)Serial.peek();
+    // Dejar bytes binarios del protocolo RF al margen
+    if ((uint8_t)ch == MAGIC_CMD || (uint8_t)ch == MAGIC_TELEM) break;
+    Serial.read();
+    if (ch == '\n' || ch == '\r') {
+      if (setKeyLineIdx > 0) {
+        setKeyLineBuf[setKeyLineIdx] = '\0';
+        handleSetKeyCommand(setKeyLineBuf);
+        setKeyLineIdx = 0;
+      }
+    } else if (setKeyLineIdx < 30) {
+      setKeyLineBuf[setKeyLineIdx++] = ch;
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════
 // LOOP
 // ═══════════════════════════════════════════════════════
 void loop() {
+  // Parsear comandos de texto SET_KEY desde terminal serial
+  parseSetKeySerial();
+
   readGPS();
 
+  // ═══════════════════════════════════════════════════════
+  // FAILSAFE: RETURN TO LAUNCH (RTL) AUTÓNOMO
+  // ═══════════════════════════════════════════════════════
+  if (millis() - lastRFTime > 1000) {
+    if (homeLat != 0.0f && homeLon != 0.0f && latitude != 0.0f && longitude != 0.0f) {
+      float dLat = (homeLat - latitude) * 111320.0f;
+      float dLon = (homeLon - longitude) * 111320.0f * cosf(latitude * PI / 180.0f);
+      float distanceToHome = sqrtf(dLat*dLat + dLon*dLon);
+      float bearingToHome = atan2f(dLon, dLat) * 180.0f / PI; // -180 a 180
+      
+      float currentYaw = yawDeg; 
+      if (currentYaw > 180.0f) currentYaw -= 360.0f;
+      
+      float yawError = bearingToHome - currentYaw;
+      if (yawError > 180.0f) yawError -= 360.0f;
+      if (yawError < -180.0f) yawError += 360.0f;
+
+      if (distanceToHome > 30.0f) {
+        // RTL Mode: volar hacia la base
+        targetRoll = constrain(yawError * 0.8f, -35.0f, 35.0f);
+        targetPitch = 5.0f;
+        targetYaw = 0.0f;
+        targetThrottle = 120;
+      } else {
+        // LOITER Mode: órbita autónoma controlada por error de radio
+        // Usa controlador PD simplificado con home como centro de órbita.
+        // Radio objetivo = 30m (coincide con umbral RTL→Loiter).
+        static float lastRtlRadiusErr = 0.0f;
+        const float RTL_ORBIT_RADIUS = 30.0f;
+        const float RTL_KP_RADIUS   = 0.6f;
+        const float RTL_KD_RADIUS   = 0.2f;
+        const float RTL_BASE_ROLL   = 20.0f;
+
+        float radiusErr   = distanceToHome - RTL_ORBIT_RADIUS;
+        float radiusDeriv = radiusErr - lastRtlRadiusErr;
+        lastRtlRadiusErr  = radiusErr;
+
+        float rollCorrection = RTL_KP_RADIUS * radiusErr + RTL_KD_RADIUS * radiusDeriv;
+        targetRoll     = constrain(RTL_BASE_ROLL + rollCorrection, -35.0f, 35.0f);
+        targetPitch    = 3.0f;
+        targetYaw      = 0.0f;
+        targetThrottle = 100;
+      }
+    } else {
+      // Fallback: Senda de planeo (si no hay datos remotos o señal GPS)
+      targetRoll = 0.0f;
+      targetPitch = 5.0f;
+      targetYaw = 0.0f;
+      targetThrottle = 0;
+    }
+  }
+
   static unsigned long lastSensorUpdate = 0;
-  if (millis() - lastSensorUpdate >= 20) {  // 50Hz
-    lastSensorUpdate = millis();
-    if (imuActive) readMPU();
+  unsigned long now = millis();
+  if (now - lastSensorUpdate >= 20) {  // 50Hz Inner Loop
+    float dt = (now - lastSensorUpdate) / 1000.0f;
+    if (dt <= 0) dt = 0.02f;
+    lastSensorUpdate = now;
+    
+    if (imuActive) {
+      readMPU();
+      
+      // 1. Suavizar setpoints de usuario
+      float smoothRoll = slewRoll.update((float)targetRoll, dt);
+      float smoothPitch = slewPitch.update((float)targetPitch, dt);
+
+      // 2. Calcular PID 
+      float rollActuator = pidRoll.compute(smoothRoll, rollDeg, dt);
+      float pitchActuator = pidPitch.compute(smoothPitch, pitchDeg, dt);
+
+      // El targetYaw actúa directo como rudder compensador por ahora
+      float yawActuator = (float)targetYaw; 
+
+      // 3. Mezclador a Servos
+      servo1Pos = targetThrottle;
+      servo2Pos = map(constrain(yawActuator, -40, 40),   -40, 40,  50, 130);
+      servo3Pos = map(constrain(rollActuator, -45, 45),  -45, 45,  45, 135);
+      servo4Pos = map(constrain(rollActuator, -45, 45),  -45, 45, 135,  45);  // invertido
+      servo5Pos = 90;
+      servo6Pos = 90;
+      servo7Pos = map(constrain(pitchActuator, -30, 30), -30, 30,  60, 120);
+      servo8Pos = map(constrain(pitchActuator, -30, 30), -30, 30,  60, 120);
+
+      // 4. Aplicar al hardware (El Failsafe ahora dicta los targets si es necesario)
+      int escAngle = map(servo1Pos, 0, 180, 0, 180);
+      esc.write(escAngle);
+      setServoAngle(SERVO_CH_YAW,     servo2Pos);
+      setServoAngle(SERVO_CH_ROLL_L,  servo3Pos);
+      setServoAngle(SERVO_CH_ROLL_R,  servo4Pos);
+      setServoAngle(SERVO_CH_FLAP_L,  servo5Pos);
+      setServoAngle(SERVO_CH_FLAP_R,  servo6Pos);
+      setServoAngle(SERVO_CH_PITCH_L, servo7Pos);
+      setServoAngle(SERVO_CH_PITCH_R, servo8Pos);
+    }
   }
 
   if (radio.available()) {
     uint8_t len = radio.getDynamicPayloadSize();
     if (len == sizeof(SecureCommand)) {
       radio.read(&secCmd, sizeof(SecureCommand));
-      btea((uint32_t*)&secCmd, -3); // Decrypt 3 words (12 bytes)
-      
-      uint16_t crc = calculateRadioCRC16((uint8_t*)&secCmd.commands, sizeof(secCmd.commands));
+      // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
+      // Paso 1: CRC sobre datos en claro (paquete ya descifrado por nRF24 ack)
+      uint16_t crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 16);
+      // Paso 2: Verificar magic + CRC
       if (secCmd.magic == MAGIC_CMD && secCmd.crc == crc) {
+        // ── Anti-replay: verificación de secuencia circular ──
+        // seqDelta en [1..128] = paquete nuevo válido
+        // seqDelta == 0 = duplicado (replay), >128 = del pasado
+        static uint8_t lastSeq = 255;
+        uint8_t seqDelta = (uint8_t)(secCmd.seq - lastSeq);
+        if (seqDelta == 0 || seqDelta > 128) {
+          goto skipCommand; // Paquete replay o fuera de orden
+        }
+        lastSeq = secCmd.seq;
+
         lastRFTime = millis();
 
-        // [0]=Yaw, [1]=Power, [2]=Pitch, [3]=Roll
-        servo1Pos = secCmd.commands[1];
-        servo2Pos = map(secCmd.commands[0], -40,  40,  50, 130);
-        servo3Pos = map(secCmd.commands[3], -45,  45,  45, 135);
-        servo4Pos = map(secCmd.commands[3], -45,  45, 135,  45);  // invertido
-        servo5Pos = 90;
-        servo6Pos = 90;
-        servo7Pos = map(secCmd.commands[2], -30, 30, 60, 120);
-        servo8Pos = map(secCmd.commands[2], -30, 30, 60, 120);
+        targetRoll     = secCmd.targetRoll;
+        targetPitch    = secCmd.targetPitch;
+        targetYaw      = secCmd.targetYaw;
+        targetThrottle = secCmd.targetThrottle;
+        
+        // Actualizar Declinación Magnética [F7]
+        magneticDeclinationDeg = secCmd.declinationX10 / 10.0f;
+        
+        // NOTA: esta condición impide que el home se resetee a (0,0) por
+        // paquetes con campos vacíos, pero también bloquea un home legítimo
+        // en lat=0, lon=0 (Gulf of Guinea). Aceptable para operación normal;
+        // considerar flag explícito "homeValid" si se opera cerca del ecuador/meridiano.
+        if (secCmd.homeLat != 0.0f && secCmd.homeLon != 0.0f) {
+          homeLat = secCmd.homeLat;
+          homeLon = secCmd.homeLon;
+        }
 
-        int escAngle = map(servo1Pos, 0, 180, 0, 180);
-        esc.write(escAngle);
-
-        setServoAngle(SERVO_CH_YAW,     servo2Pos);
-        setServoAngle(SERVO_CH_ROLL_L,  servo3Pos);
-        setServoAngle(SERVO_CH_ROLL_R,  servo4Pos);
-        setServoAngle(SERVO_CH_FLAP_L,  servo5Pos);
-        setServoAngle(SERVO_CH_FLAP_R,  servo6Pos);
-        setServoAngle(SERVO_CH_PITCH_L, servo7Pos);
-        setServoAngle(SERVO_CH_PITCH_R, servo8Pos);
-
+        // Ya no escribimos servos aquí, el Inner Loop a 50Hz se encarga.
+        
         pushTelemetryAck();
       }
+      skipCommand:;
     } else {
       // Flush invalid payload
       uint8_t dummy[32];
       radio.read(&dummy, len);
     }
-  }
-
-  // Failsafe
-  if (millis() - lastRFTime > 1000) {
-    esc.write(0);
-    setServoAngle(SERVO_CH_YAW,     100); // 10 grados rudder para circulo
-    setServoAngle(SERVO_CH_ROLL_L,  90);
-    setServoAngle(SERVO_CH_ROLL_R,  90);
-    setServoAngle(SERVO_CH_FLAP_L,  90);
-    setServoAngle(SERVO_CH_FLAP_R,  90);
-    setServoAngle(SERVO_CH_PITCH_L, 95); // Ligero pitch up
-    setServoAngle(SERVO_CH_PITCH_R, 95);
   }
 }
 
@@ -473,7 +715,6 @@ void updateVelocityFusion(float gpsVx, float gpsVy, float gpsVz) {
   float imuVy = imuDirY * scaleMag;
   float imuVz = imuDirZ * scaleMag;
 
-  // ── 6. Fusión híbrida ─────────────────────────────
   float hybX = imuVx * (1.0f - GPS_WEIGHT) + gpsVx * GPS_WEIGHT;
   float hybY = imuVy * (1.0f - GPS_WEIGHT) + gpsVy * GPS_WEIGHT;
   float hybZ = imuVz * (1.0f - GPS_WEIGHT) + gpsVz * GPS_WEIGHT;
@@ -558,7 +799,7 @@ void readGPS() {
 // readMPU — Kalman actitud: pitch, roll, yaw
 // ═══════════════════════════════════════════════════════
 void readMPU() {
-  mpu.readSensor();
+  if (!mpu.Read()) return;  // Si el sensor no responde, salir
 
   unsigned long now = millis();
   float dt = (now - lastIMUTime) / 1000.0f;
@@ -566,9 +807,9 @@ void readMPU() {
   lastIMUTime = now;
 
   // ── Acelerómetro (m/s²) ──────────────────────────
-  float ax = mpu.getAccelX_mss();
-  float ay = mpu.getAccelY_mss();
-  float az = mpu.getAccelZ_mss();
+  float ax = mpu.accel_x_mps2();
+  float ay = mpu.accel_y_mps2();
+  float az = mpu.accel_z_mps2();
 
   // G-Force total
   totalGForce = sqrtf(ax*ax + ay*ay + az*az) / 9.81f;
@@ -578,9 +819,9 @@ void readMPU() {
   float accelRoll  = atan2f(-ax, az) * 57.2958f;
 
   // ── Giróscopo (grados/s) ─────────────────────────
-  float gyroPitchRate = mpu.getGyroY_rads() * 57.2958f;
-  float gyroRollRate  = mpu.getGyroX_rads() * 57.2958f;
-  float gyroYawRate   = mpu.getGyroZ_rads() * 57.2958f;
+  float gyroPitchRate = mpu.gyro_y_radps() * 57.2958f;
+  float gyroRollRate  = mpu.gyro_x_radps() * 57.2958f;
+  float gyroYawRate   = mpu.gyro_z_radps() * 57.2958f;
 
   // ── Kalman pitch y roll ──────────────────────────
   //    Cuando la G total es muy distinta de 1G (maniobra/aceleración),
@@ -599,13 +840,14 @@ void readMPU() {
   }
 
   // ── Magnetómetro con compensación de inclinación ─
-  float magX = mpu.getMagX_uT();
-  float magY = mpu.getMagY_uT();
-  float magZ = mpu.getMagZ_uT();
+  float magX = mpu.mag_x_ut();
+  float magY = mpu.mag_y_ut();
+  float magZ = mpu.mag_z_ut();
 
   float pitchRad = pitchDeg * 0.0174533f;
   float rollRad  = rollDeg  * 0.0174533f;
 
+  // ── 4. Magnetómetro (Yaw) ───────────────────────
   // Compensación completa de tilt (pitch + roll)
   float magXComp =  magX * cosf(pitchRad)
                   + magY * sinf(rollRad) * sinf(pitchRad)
@@ -617,8 +859,40 @@ void readMPU() {
   float magYaw = atan2f(-magYComp, magXComp) * 57.2958f;
   if (magYaw < 0.0f) magYaw += 360.0f;
 
+  // Aplicar declinación magnética [F7]
+  magYaw += magneticDeclinationDeg;
+  if (magYaw < 0.0f) magYaw += 360.0f;
+  if (magYaw >= 360.0f) magYaw -= 360.0f;
+
   // Kalman yaw: gyroYawRate en deg/s, magYaw como medición absoluta
-  yawDeg = kalmanYaw.update(gyroYawRate, magYaw, dt);
+  kalmanYaw.update(gyroYawRate, magYaw, dt);
+  yawDeg = kalmanYaw.getAngle();
+
+  // ── 5. Filtro Complementario (Watchdog) [F6] ──────
+  const float COMP_ALPHA = 0.98f;
+  static float compPitch = 0.0f, compRoll = 0.0f;
+  static bool compInit = false;
+
+  if (!compInit) {
+    compPitch = accelPitch;
+    compRoll = accelRoll;
+    compInit = true;
+  }
+  compPitch = COMP_ALPHA * (compPitch + gyroPitchRate * dt) + (1.0f - COMP_ALPHA) * accelPitch;
+  compRoll = COMP_ALPHA * (compRoll + gyroRollRate * dt) + (1.0f - COMP_ALPHA) * accelRoll;
+
+  // Si el Kalman diverge > 15°, forzar reset suave al complementario [F6]
+  const float KALMAN_DIVERGENCE_DEG = 15.0f;
+  if (fabsf(pitchDeg - compPitch) > KALMAN_DIVERGENCE_DEG) {
+    kalmanPitch.setAngle(compPitch);
+    pitchDeg = compPitch;
+  }
+  if (fabsf(rollDeg - compRoll) > KALMAN_DIVERGENCE_DEG) {
+    kalmanRoll.setAngle(compRoll);
+    rollDeg = compRoll;
+  }
+
+  // ── 6. Empaquetado para telemetría ───────────────
   if (yawDeg < 0.0f)   yawDeg += 360.0f;
   if (yawDeg >= 360.0f) yawDeg -= 360.0f;
 }

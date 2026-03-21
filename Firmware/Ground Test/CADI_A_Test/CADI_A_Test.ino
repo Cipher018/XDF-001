@@ -1,10 +1,10 @@
 #include <Adafruit_PWMServoDriver.h>
 #include <ESP32Servo.h>
-#include <MPU9250.h>
 #include <RF24.h>
 #include <SPI.h>
 #include <TinyGPSPlus.h>
 #include <Wire.h>
+#include <mpu9250.h>
 #include <nRF24L01.h>
 
 // --- Throttle ESC ---
@@ -50,39 +50,45 @@ const byte pipeTX[6] = "TEL01";
 // ═══════════════════════════════════════════════════════
 // SEGURIDAD DE COMUNICACIONES (XXTEA)
 // ═══════════════════════════════════════════════════════
-uint32_t sharedKey[4] = { 0x58444630, 0x30314B45, 0x595F3230, 0x32362121 }; // "XDF001KEY_2026!!" en hex
+// ⚠ SEGURIDAD: Clave XXTEA hardcodeada — SOLO PARA PROTOTIPO.
+// En producción, derivar de ESP.getEfuseMac() y almacenar en NVS cifrado.
+// Cualquier persona con acceso al binario puede extraer esta clave.
+uint32_t sharedKey[4] = {0x58444630, 0x30314B45, 0x595F3230,
+                         0x32362121}; // "XDF001KEY_2026!!" en hex
 #define XXTEA_DELTA 0x9e3779b9
-#define XXTEA_MX (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((sum^y) + (sharedKey[(p&3)^e] ^ z)))
+#define XXTEA_MX                                                               \
+  (((z >> 5 ^ y << 2) + (y >> 3 ^ z << 4)) ^                                   \
+   ((sum ^ y) + (sharedKey[(p & 3) ^ e] ^ z)))
 
 void btea(uint32_t *v, int n) {
   uint32_t y, z, sum;
   unsigned p, rounds, e;
   if (n > 1) {
-    rounds = 6 + 52/n;
+    rounds = 6 + 52 / n;
     sum = 0;
-    z = v[n-1];
+    z = v[n - 1];
     do {
       sum += XXTEA_DELTA;
       e = (sum >> 2) & 3;
-      for (p=0; p<n-1; p++) {
-        y = v[p+1];
+      for (p = 0; p < n - 1; p++) {
+        y = v[p + 1];
         z = v[p] += XXTEA_MX;
       }
       y = v[0];
-      z = v[n-1] += XXTEA_MX;
+      z = v[n - 1] += XXTEA_MX;
     } while (--rounds);
   } else if (n < -1) {
     n = -n;
-    rounds = 6 + 52/n;
-    sum = rounds*XXTEA_DELTA;
+    rounds = 6 + 52 / n;
+    sum = rounds * XXTEA_DELTA;
     y = v[0];
     do {
       e = (sum >> 2) & 3;
-      for (p=n-1; p>0; p--) {
-        z = v[p-1];
+      for (p = n - 1; p > 0; p--) {
+        z = v[p - 1];
         y = v[p] -= XXTEA_MX;
       }
-      z = v[n-1];
+      z = v[n - 1];
       y = v[0] -= XXTEA_MX;
       sum -= XXTEA_DELTA;
     } while (--rounds);
@@ -90,38 +96,122 @@ void btea(uint32_t *v, int n) {
 }
 
 // ── Headers Seguros ──
-const uint8_t MAGIC_CMD   = 0xAA;
+const uint8_t MAGIC_CMD = 0xAA;
 const uint8_t MAGIC_TELEM = 0xBB;
 
 struct __attribute__((packed)) SecureCommand {
-  uint8_t  magic;
-  uint8_t  seq;
+  uint8_t magic;
+  uint8_t seq;
   uint16_t crc;
-  int16_t  commands[4];
-}; // 12 bytes
+  int16_t targetRoll;
+  int16_t targetPitch;
+  int16_t targetYaw;
+  int16_t targetThrottle;
+  float homeLat;
+  float homeLon;
+  uint16_t padding;
+}; // 24 bytes
 
 struct __attribute__((packed)) SecureTelemetry {
-  uint8_t  magic;
-  uint8_t  seq;
+  uint8_t magic;
+  uint8_t seq;
   uint16_t crc;
-  float    telem[6];
+  float telem[6];
 }; // 28 bytes
 
-SecureCommand   secCmd;
+SecureCommand secCmd;
 SecureTelemetry secTelem;
-uint8_t         telemSeq = 0;
+uint8_t telemSeq = 0;
+
+// ── Target Angles from Ground Station ──
+int16_t targetRoll = 0;
+int16_t targetPitch = 0;
+int16_t targetYaw = 0;
+int16_t targetThrottle = 0;
+
+// ── Home Coordinates for RTL ──
+float homeLat = 0.0f;
+float homeLon = 0.0f;
 
 uint16_t calculateRadioCRC16(const uint8_t *data, size_t length) {
   uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < length; i++) {
     crc ^= (uint16_t)data[i] << 8;
     for (uint8_t j = 0; j < 8; j++) {
-      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
-      else              crc = crc << 1;
+      if (crc & 0x8000)
+        crc = (crc << 1) ^ 0x1021;
+      else
+        crc = crc << 1;
     }
   }
   return crc;
 }
+
+// ═══════════════════════════════════════════════════════
+// FLY-BY-WIRE & PID (LAZO INTERNO)
+// ═══════════════════════════════════════════════════════
+
+class SlewLimiter {
+  float current;
+  float maxRate;
+
+public:
+  SlewLimiter(float rate) : current(0), maxRate(rate) {}
+  float update(float target, float dt) {
+    float delta = target - current;
+    float maxDelta = maxRate * dt;
+    if (delta > maxDelta)
+      current += maxDelta;
+    else if (delta < -maxDelta)
+      current -= maxDelta;
+    else
+      current = target;
+    return current;
+  }
+};
+
+class PIDController {
+public:
+  float kp, ki, kd;
+  float integralMax;
+  float integral;
+  float lastMeasured;
+  bool firstRun;
+
+  PIDController(float p, float i, float d, float iMax)
+      : kp(p), ki(i), kd(d), integralMax(iMax), integral(0), lastMeasured(0),
+        firstRun(true) {}
+
+  float compute(float setpoint, float measured, float dt) {
+    if (firstRun) {
+      lastMeasured = measured;
+      firstRun = false;
+    }
+
+    float error = setpoint - measured;
+    float pOut = kp * error;
+
+    integral += error * dt;
+    if (integral > integralMax)
+      integral = integralMax;
+    else if (integral < -integralMax)
+      integral = -integralMax;
+    float iOut = ki * integral;
+
+    float dMeasured = (measured - lastMeasured) / dt;
+    float dOut = -kd * dMeasured;
+    lastMeasured = measured;
+
+    return pOut + iOut + dOut;
+  }
+};
+
+// ── Controladores ──
+SlewLimiter slewRoll(90.0f);
+SlewLimiter slewPitch(90.0f);
+
+PIDController pidRoll(1.2f, 0.1f, 0.2f, 20.0f);
+PIDController pidPitch(1.5f, 0.1f, 0.2f, 20.0f);
 
 // --- Payloads ---
 float telemetryData[6];       // Telemetry packet to send
@@ -172,7 +262,8 @@ void setup() {
     Serial.println("MPU-9250: Online");
 
     // Calibrate Gyroscope (keep sensor stationary during this phase)
-    Serial.println("CALIBRATING GYRO (3 seconds)... Please do not move the aircraft.");
+    Serial.println(
+        "CALIBRATING GYRO (3 seconds)... Please do not move the aircraft.");
     delay(1000);
     mpu.calibrateGyro();
     Serial.println("Gyroscope Calibration Complete.");
@@ -209,19 +300,24 @@ void setup() {
   esc.attach(ESC_PIN, 1000, 2000); // Standard ESC pulse width
   esc.write(0);                    // Arming step (neutral)
 
-void pushTelemetryAck() {
-  updateTelemetry();
-  secTelem.magic = MAGIC_TELEM;
-  secTelem.seq   = telemSeq++;
-  memcpy(secTelem.telem, telemetryData, sizeof(telemetryData));
-  secTelem.crc   = calculateRadioCRC16((uint8_t*)&secTelem.telem, sizeof(telemetryData));
-  
-  btea((uint32_t*)&secTelem, 7); // Encrypt 7 words (28 bytes)
-  radio.writeAckPayload(1, &secTelem, sizeof(SecureTelemetry));
-}
+  void pushTelemetryAck() {
+    updateTelemetry();
+    secTelem.magic = MAGIC_TELEM;
+    secTelem.seq = telemSeq++;
+    memcpy(secTelem.telem, telemetryData, sizeof(telemetryData));
+    secTelem.crc =
+        calculateRadioCRC16((uint8_t *)&secTelem.telem, sizeof(telemetryData));
 
-  // Initialize nRF Radio after IMU... (Already inside setup function, I'll place this just after servo zeroing)
-  // Set all servos to neutral position (90 degrees)
+    // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
+    // Paso 1 (arriba): CRC sobre datos en claro
+    // Paso 2 (abajo): Cifrar paquete completo (CRC incluido)
+    btea((uint32_t *)&secTelem, 7); // Encrypt 7 words (28 bytes)
+    radio.writeAckPayload(1, &secTelem, sizeof(SecureTelemetry));
+  }
+
+  // Initialize nRF Radio after IMU... (Already inside setup function, I'll
+  // place this just after servo zeroing) Set all servos to neutral position (90
+  // degrees)
   for (int i = 0; i < 7; i++) {
     setServoAngle(i, 90);
   }
@@ -241,10 +337,119 @@ void loop() {
   // Continuous sensor acquisition
   readGPS();
 
+  // ═══════════════════════════════════════════════════════
+  // FAILSAFE: RETURN TO LAUNCH (RTL) AUTÓNOMO
+  // ═══════════════════════════════════════════════════════
+  if (millis() - lastRFTime > 1000) {
+    if (homeLat != 0.0f && homeLon != 0.0f && latitude != 0.0f &&
+        longitude != 0.0f) {
+      float dLat = (homeLat - latitude) * 111320.0f;
+      float dLon =
+          (homeLon - longitude) * 111320.0f * cosf(latitude * PI / 180.0f);
+      float distanceToHome = sqrtf(dLat * dLat + dLon * dLon);
+      float bearingToHome = atan2f(dLon, dLat) * 180.0f / PI; // -180 a 180
+
+      float currentYaw = heading;
+      if (currentYaw > 180.0f)
+        currentYaw -= 360.0f;
+
+      float yawError = bearingToHome - currentYaw;
+      if (yawError > 180.0f)
+        yawError -= 360.0f;
+      if (yawError < -180.0f)
+        yawError += 360.0f;
+
+      if (distanceToHome > 30.0f) {
+        // RTL Mode: volar hacia la base
+        targetRoll = constrain(yawError * 0.8f, -35.0f, 35.0f);
+        targetPitch = 5.0f;
+        targetYaw = 0.0f;
+        targetThrottle = 120;
+      } else {
+        // LOITER Mode: órbita autónoma controlada por error de radio
+        // Usa controlador PD simplificado con home como centro de órbita.
+        // Radio objetivo = 30m (coincide con umbral RTL→Loiter).
+        static float lastRtlRadiusErr = 0.0f;
+        const float RTL_ORBIT_RADIUS = 30.0f;
+        const float RTL_KP_RADIUS   = 0.6f;
+        const float RTL_KD_RADIUS   = 0.2f;
+        const float RTL_BASE_ROLL   = 20.0f;
+
+        float radiusErr   = distanceToHome - RTL_ORBIT_RADIUS;
+        float radiusDeriv = radiusErr - lastRtlRadiusErr;
+        lastRtlRadiusErr  = radiusErr;
+
+        float rollCorrection = RTL_KP_RADIUS * radiusErr + RTL_KD_RADIUS * radiusDeriv;
+        targetRoll     = constrain(RTL_BASE_ROLL + rollCorrection, -35.0f, 35.0f);
+        targetPitch    = 3.0f;
+        targetYaw      = 0.0f;
+        targetThrottle = 100;
+      }
+    } else {
+      // Fallback: Senda de planeo (si no hay datos remotos o señal GPS)
+      targetRoll = 0.0f;
+      targetPitch = 5.0f;
+      targetYaw = 0.0f;
+      targetThrottle = 0;
+    }
+
+    static unsigned long lastFailsafePrint = 0;
+    if (millis() - lastFailsafePrint > 1000) {
+      Serial.println(
+          "!!! FAILSAFE TRIGGERED !!! SIGNAL LOST - AUTONOMOUS RTL ACTIVE");
+      lastFailsafePrint = millis();
+    }
+  }
+
   static unsigned long lastSensorUpdate = 0;
-  if (millis() - lastSensorUpdate >= 20) { // 50Hz timer
-    lastSensorUpdate = millis();
-    if (imuActive) readMPU();
+  unsigned long now = millis();
+  if (now - lastSensorUpdate >= 20) { // 50Hz Inner Loop
+    float dt = (now - lastSensorUpdate) / 1000.0f;
+    if (dt <= 0)
+      dt = 0.02f;
+    lastSensorUpdate = now;
+
+    if (imuActive) {
+      readMPU();
+
+      // 1. Suavizar setpoints de usuario
+      float smoothRoll = slewRoll.update((float)targetRoll, dt);
+      float smoothPitch = slewPitch.update((float)targetPitch, dt);
+
+      // 2. Calcular PID
+      float rollActuator = pidRoll.compute(smoothRoll, roll, dt);
+      float pitchActuator = pidPitch.compute(smoothPitch, pitch, dt);
+
+      float yawActuator = (float)targetYaw;
+
+      // 3. Mezclador a Servos
+      servo1Pos = targetThrottle; // Throttle
+      servo2Pos =
+          map(constrain(yawActuator, -40, 40), -40, 40, 50, 130); // Rudder/Yaw
+      servo3Pos = map(constrain(rollActuator, -45, 45), -45, 45, 45,
+                      135); // Left Aileron
+      servo4Pos = map(constrain(rollActuator, -45, 45), -45, 45, 135,
+                      45); // Right Aileron (Inverted)
+      servo5Pos = 90;      // Flaps
+      servo6Pos = 90;      // Flaps
+      servo7Pos = map(constrain(pitchActuator, -30, 30), -30, 30, 60,
+                      120); // Left Elevator
+      servo8Pos = map(constrain(pitchActuator, -30, 30), -30, 30, 60,
+                      120); // Right Elevator
+
+      // 4. Aplicar al hardware (El Failsafe ahora dicta los targets si es
+      // necesario)
+      int escAngle = map(servo1Pos, 0, 180, 0, 180);
+      esc.write(escAngle);
+
+      setServoAngle(SERVO_CH_YAW, servo2Pos);
+      setServoAngle(SERVO_CH_ROLL_L, servo3Pos);
+      setServoAngle(SERVO_CH_ROLL_R, servo4Pos);
+      setServoAngle(SERVO_CH_FLAP_L, servo5Pos);
+      setServoAngle(SERVO_CH_FLAP_R, servo6Pos);
+      setServoAngle(SERVO_CH_PITCH_L, servo7Pos);
+      setServoAngle(SERVO_CH_PITCH_R, servo8Pos);
+    }
   }
 
   // Process incoming radio commands if available
@@ -252,57 +457,46 @@ void loop() {
     uint8_t len = radio.getDynamicPayloadSize();
     if (len == sizeof(SecureCommand)) {
       radio.read(&secCmd, sizeof(SecureCommand));
-      btea((uint32_t*)&secCmd, -3); // Decrypt 12 bytes
-
-      uint16_t crc = calculateRadioCRC16((uint8_t*)&secCmd.commands, sizeof(secCmd.commands));
+      // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
+      // Paso 1: CRC sobre datos en claro
+      uint16_t crc = calculateRadioCRC16((uint8_t *)&secCmd.targetRoll, 16);
+      // Paso 2: Verificar magic + CRC
       if (secCmd.magic == MAGIC_CMD && secCmd.crc == crc) {
+        // ── Anti-replay: verificación de secuencia circular ──
+        // seqDelta en [1..128] = paquete nuevo válido
+        // seqDelta == 0 = duplicado (replay), >128 = del pasado
+        static uint8_t lastSeq = 255;
+        uint8_t seqDelta = (uint8_t)(secCmd.seq - lastSeq);
+        if (seqDelta == 0 || seqDelta > 128) {
+          goto skipCommand; // Paquete replay o fuera de orden
+        }
+        lastSeq = secCmd.seq;
+
         lastRFTime = millis();
 
-        // Command Mapping: [0]=Yaw, [1]=Power, [2]=Pitch, [3]=Roll
-        servo1Pos = secCmd.commands[1]; // Throttle (Pass-through)
-        servo2Pos = map(secCmd.commands[0], -40, 40, 50, 130); // Rudder/Yaw
-        servo3Pos = map(secCmd.commands[3], -45, 45, 45, 135); // Left Aileron
-        servo4Pos = map(secCmd.commands[3], -45, 45, 135, 45); // Right Aileron (Inverted)
-        servo5Pos = 90;                            // Flaps - Future implementation
-        servo6Pos = 90;                            // Flaps - Future implementation
-        servo7Pos = map(secCmd.commands[2], -30, 30, 60, 120); // Left Elevator
-        servo8Pos = map(secCmd.commands[2], -30, 30, 60, 120); // Right Elevator
+        // [0]=Yaw, [1]=Power, [2]=Pitch, [3]=Roll
+        targetRoll = secCmd.targetRoll;
+        targetPitch = secCmd.targetPitch;
+        targetYaw = secCmd.targetYaw;
+        targetThrottle = secCmd.targetThrottle;
 
-        int escAngle = map(servo1Pos, 0, 180, 0, 180);
-        esc.write(escAngle);
+        // NOTA: esta condición impide que el home se resetee a (0,0) por
+        // paquetes con campos vacíos, pero también bloquea un home legítimo
+        // en lat=0, lon=0 (Gulf of Guinea). Aceptable para operación normal;
+        // considerar flag explícito "homeValid" si se opera cerca del ecuador/meridiano.
+        if (secCmd.homeLat != 0.0f && secCmd.homeLon != 0.0f) {
+          homeLat = secCmd.homeLat;
+          homeLon = secCmd.homeLon;
+        }
 
-        setServoAngle(SERVO_CH_YAW, servo2Pos);
-        setServoAngle(SERVO_CH_ROLL_L, servo3Pos);
-        setServoAngle(SERVO_CH_ROLL_R, servo4Pos);
-        setServoAngle(SERVO_CH_FLAP_L, servo5Pos);
-        setServoAngle(SERVO_CH_FLAP_R, servo6Pos);
-        setServoAngle(SERVO_CH_PITCH_L, servo7Pos);
-        setServoAngle(SERVO_CH_PITCH_R, servo8Pos);
-
+        // Ya no aplicamos comandos al servo manual aquí.
         pushTelemetryAck();
         Serial.println("Command received. Telemetry updated.");
       }
+      skipCommand:;
     } else {
       uint8_t dummy[32];
       radio.read(&dummy, len);
-    }
-  }
-
-  // Failsafe check: Trigger if signal lost for > 1000ms
-  if (millis() - lastRFTime > 1000) {
-    esc.write(0); // Cut throttle
-    setServoAngle(SERVO_CH_YAW, 100); // Slight rudder to circle
-    setServoAngle(SERVO_CH_ROLL_L, 90);
-    setServoAngle(SERVO_CH_ROLL_R, 90);
-    setServoAngle(SERVO_CH_FLAP_L, 90);
-    setServoAngle(SERVO_CH_FLAP_R, 90);
-    setServoAngle(SERVO_CH_PITCH_L, 95); // Slight pitch up for glide
-    setServoAngle(SERVO_CH_PITCH_R, 95);
-
-    static unsigned long lastFailsafePrint = 0;
-    if (millis() - lastFailsafePrint > 1000) {
-      Serial.println("!!! FAILSAFE TRIGGERED !!! SIGNAL LOST");
-      lastFailsafePrint = millis();
     }
   }
 }
