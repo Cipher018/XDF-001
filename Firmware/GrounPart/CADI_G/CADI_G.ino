@@ -1,4 +1,8 @@
+#include <Arduino.h>
+#include <SPI.h>
+#include <RF24.h>
 #include <nRF24L01.h>
+#include <Bluepad32.h>
 #include <Preferences.h> // [F5]
 
 // ── Global Mission State [F2] ──
@@ -15,6 +19,51 @@ RouteWaypoint waypointRoute[MAX_WAYPOINTS];
 int waypointCount = 0;
 int waypointIndex = 0;
 bool routeLoop     = false;
+
+enum NavigationMode { MODE_MANUAL = 0, MODE_WAYPOINT = 1, MODE_ORBIT = 2 };
+NavigationMode currentMode = MODE_MANUAL;
+
+// ── Forward Declarations ──
+class Vector3D;
+Vector3D GPSToLocal(float lat, float lon, float alt);
+void resetOrbitSystem();
+
+// ── nRF24L01 Configuration ──
+#define CE_PIN 5
+#define CSN_PIN 4
+RF24 radio(CE_PIN, CSN_PIN);
+const byte pipeTX[6] = "CMD01";
+const byte pipeRX[6] = "TEL01";
+
+// ── VECTORS CLASS ──
+class Vector3D {
+public:
+  float x, y, z;
+  Vector3D(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+  Vector3D operator-(const Vector3D &v) const { return Vector3D(x - v.x, y - v.y, z - v.z); }
+  Vector3D operator+(const Vector3D &v) const { return Vector3D(x + v.x, y + v.y, z + v.z); }
+  Vector3D operator*(float s) const { return Vector3D(x * s, y * s, z * s); }
+  float magnitude() const { return sqrt(x * x + y * y + z * z); }
+  Vector3D normalize() const {
+    float mag = magnitude();
+    if (mag < 0.001) return Vector3D(0, 0, 0);
+    return Vector3D(x / mag, y / mag, z / mag);
+  }
+  float dot(const Vector3D &v) const { return x * v.x + y * v.y + z * v.z; }
+  Vector3D cross(const Vector3D &v) const {
+    return Vector3D(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
+  }
+};
+
+// ── HID & Navigation Variables (Moved up to fix scope) ──
+bool  originEstablished = false;
+float orbitRadius       = 50.0f;
+float orbitAltitude     = 50.0f;
+bool  orbitClockwise     = false;
+Vector3D gpsOrigin(0, 0, 0);
+Vector3D targetWaypoint(50.0f, 100.0f, 30.0f);
+Vector3D orbitCenter(100.0f, 100.0f, 50.0f);
+ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
 // ── Link Quality Stats [F3] ──
 static uint8_t lastTelemSeq = 0;
@@ -429,37 +478,7 @@ void updateSerialParser() {
 // VECTORS CLASS
 // ═══════════════════════════════════════════════════════
 
-class Vector3D {
-public:
-  float x, y, z;
-
-  Vector3D(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
-
-  Vector3D operator-(const Vector3D &v) const {
-    return Vector3D(x - v.x, y - v.y, z - v.z);
-  }
-
-  Vector3D operator+(const Vector3D &v) const {
-    return Vector3D(x + v.x, y + v.y, z + v.z);
-  }
-
-  Vector3D operator*(float s) const { return Vector3D(x * s, y * s, z * s); }
-
-  float magnitude() const { return sqrt(x * x + y * y + z * z); }
-
-  Vector3D normalize() const {
-    float mag = magnitude();
-    if (mag < 0.001)
-      return Vector3D(0, 0, 0);
-    return Vector3D(x / mag, y / mag, z / mag);
-  }
-
-  float dot(const Vector3D &v) const { return x * v.x + y * v.y + z * v.z; }
-
-  Vector3D cross(const Vector3D &v) const {
-    return Vector3D(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
-  }
-};
+// Vectors class moved to top
 
 // ═══════════════════════════════════════════════════════
 // TELEMETRY
@@ -478,13 +497,7 @@ float yaw   = 0.0f;  // Degrees (0-360)
 // System State
 float gforce = 0.0f;  // G-Force
 
-// nRF24L01 Configuration
-#define CE_PIN 5
-#define CSN_PIN 4
-
-RF24 radio(CE_PIN, CSN_PIN);
-const byte pipeTX[6] = "CMD01"; // Command Out Pipe
-const byte pipeRX[6] = "TEL01"; // Telemetry In Pipe
+// nRF24L01 Configuration (Moved to top)
 
 // ═══════════════════════════════════════════════════════
 // SEGURIDAD DE COMUNICACIONES (XXTEA)
@@ -574,23 +587,14 @@ int16_t        commands[4];
 AircraftTelemetry aircraftTelem;
 
 // HID Configuration
-ControllerPtr myControllers[BP32_MAX_GAMEPADS];
+// (myControllers moved to top)
 
 // ═══════════════════════════════════════════════════════
 // NAVIGATION SYSTEM
 // ═══════════════════════════════════════════════════════
 
-Vector3D gpsOrigin(0, 0, 0);
-bool originEstablished = false;
-
-enum NavigationMode { MODE_MANUAL = 0, MODE_WAYPOINT = 1, MODE_ORBIT = 2 };
-NavigationMode currentMode = MODE_MANUAL;
-
-Vector3D targetWaypoint(50.0f, 100.0f, 30.0f);
-Vector3D orbitCenter(100.0f, 100.0f, 50.0f);
-float orbitRadius    = 50.0f;
-float orbitAltitude  = 50.0f;
-bool  orbitClockwise = false;
+// (Navigation variables moved to top)
+// (orbitRadius, orbitAltitude, orbitClockwise moved to top)
 
 struct AircraftState {
   Vector3D position;
