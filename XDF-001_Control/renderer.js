@@ -104,6 +104,7 @@ function applyLanguage(lang) {
     // Update static UI text
     document.querySelector('.tab-btn[data-target="telemetry-view"]').textContent = t('telemetry');
     document.querySelector('.tab-btn[data-target="commands-view"]').textContent = t('mission');
+    document.querySelector('.tab-btn[data-target="debug-view"]').textContent = 'Debug Station';
     document.querySelector('#drone-state-indicator').textContent = t('droneStatus');
 }
 
@@ -518,10 +519,17 @@ window.electronAPI.onTelemetryData((data) => {
         altitude: alt,
         yaw,
         pitch,
+        roll,
         gforce,
         velocity_mag,
         currentMode,
+        cmd_yaw,
+        cmd_pitch,
+        cmd_roll,
         cmd_throttle,
+        pos_local_x,
+        pos_local_y,
+        pos_local_z,
         lossRate = 0
     } = data;
     
@@ -531,7 +539,6 @@ window.electronAPI.onTelemetryData((data) => {
     const modes = ["Manual", "Waypoint", "Orbit"];
     const state = modes[currentMode] || "Unknown";
     const speed = velocity_mag * 3.6; // Convert m/s to Km/h
-    const roll = 0; // Not available from drone yet
     const bearing = yaw;
 
     // Update Metrics
@@ -540,6 +547,25 @@ window.electronAPI.onTelemetryData((data) => {
     const powerPct = Math.round((cmd_throttle / 180) * 100);
     document.querySelector('#power .metric-value').innerHTML = `${powerPct} <span class="unit">%</span>`;
     document.querySelector('#gforce .metric-value').innerHTML = `${gforce.toFixed(2)} <span class="unit">g</span>`;
+    
+    // Update Debug / System Status (New Tab Fields)
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+    };
+
+    setVal('db-target-roll', `${cmd_roll.toFixed(1)}°`);
+    setVal('db-target-pitch', `${cmd_pitch.toFixed(1)}°`);
+    setVal('db-target-yaw', `${cmd_yaw.toFixed(1)}°`);
+    setVal('db-target-throttle', cmd_throttle);
+
+    setVal('db-pos-x', `${pos_local_x.toFixed(1)}m`);
+    setVal('db-pos-y', `${pos_local_y.toFixed(1)}m`);
+    setVal('db-pos-z', `${pos_local_z.toFixed(1)}m`);
+
+    setVal('db-pkt-total', (window._totalPackets || 0) + 1);
+    window._totalPackets = (window._totalPackets || 0) + 1;
+    setVal('db-pkt-rate', `${lossRate}%`);
     
     // Update Signal Quality [F3]
     const signalVal = document.getElementById('signal-quality-value');
@@ -557,6 +583,22 @@ window.electronAPI.onTelemetryData((data) => {
     document.getElementById('roll').innerText = `${roll.toFixed(1)}°`;
     document.getElementById('yaw').innerText = `${yaw.toFixed(1)}°`;
     document.getElementById('bearing').innerText = `${bearing.toFixed(1)}°`;
+
+    // Handle incoming device messages [F4]
+    if (window.electronAPI.onDeviceMessage && !window._messageHandlerAdded) {
+        window.electronAPI.onDeviceMessage((msg) => {
+            const consoleEl = document.getElementById('debug-console');
+            if (consoleEl) {
+                const entry = document.createElement('div');
+                entry.className = 'log-entry device';
+                const time = new Date().toLocaleTimeString();
+                entry.textContent = `[${time}] ${msg}`;
+                consoleEl.appendChild(entry);
+                consoleEl.scrollTop = consoleEl.scrollHeight;
+            }
+        });
+        window._messageHandlerAdded = true;
+    }
 
     // Update Map
     const coords = [lat, lon];
@@ -751,6 +793,7 @@ const tabButtons = document.querySelectorAll('.tab-btn:not(.modal-body .tab-btn)
 const views = {
     'telemetry-view': document.getElementById('telemetry-view'),
     'commands-view': document.getElementById('commands-view'),
+    'debug-view': document.getElementById('debug-view'),
 };
 
 let missionMapInitialized = false;

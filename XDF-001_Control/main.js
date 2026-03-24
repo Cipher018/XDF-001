@@ -62,6 +62,7 @@ function validateTelemetry(data) {
   }
   if (!isFiniteNum(validated.yaw)) validated.yaw = 0;
   if (!isFiniteNum(validated.pitch)) validated.pitch = 0;
+  if (!isFiniteNum(validated.roll)) validated.roll = 0;
   if (!isFiniteNum(validated.gforce)) {
     validated.gforce = 1.0;
   } else {
@@ -248,7 +249,7 @@ async function connectSerialInternal(portPath, baudRate) {
       const calculatedCRC = calculateCRC16(serialBuffer, 1, 1 + 1 + len);
 
       if (receivedCRC === calculatedCRC) {
-        if (type === 0x02 && len === 50) {
+        if (type === 0x02 && len === 54) {
           const offset = 3;
           const telemetryData = {
             latitude: serialBuffer.readFloatLE(offset),
@@ -256,17 +257,18 @@ async function connectSerialInternal(portPath, baudRate) {
             altitude: serialBuffer.readFloatLE(offset + 8),
             yaw: serialBuffer.readFloatLE(offset + 12),
             pitch: serialBuffer.readFloatLE(offset + 16),
-            gforce: serialBuffer.readFloatLE(offset + 20),
-            velocity_mag: serialBuffer.readFloatLE(offset + 24),
-            pos_local_x: serialBuffer.readFloatLE(offset + 28),
-            pos_local_y: serialBuffer.readFloatLE(offset + 32),
-            pos_local_z: serialBuffer.readFloatLE(offset + 36),
-            currentMode: serialBuffer.readUInt8(offset + 40),
-            cmd_yaw: serialBuffer.readInt16LE(offset + 41),
-            cmd_throttle: serialBuffer.readInt16LE(offset + 43),
-            cmd_pitch: serialBuffer.readInt16LE(offset + 45),
-            cmd_roll: serialBuffer.readInt16LE(offset + 47),
-            lossRate: serialBuffer.readUInt8(offset + 49)
+            roll: serialBuffer.readFloatLE(offset + 20),
+            gforce: serialBuffer.readFloatLE(offset + 24),
+            velocity_mag: serialBuffer.readFloatLE(offset + 28),
+            pos_local_x: serialBuffer.readFloatLE(offset + 32),
+            pos_local_y: serialBuffer.readFloatLE(offset + 36),
+            pos_local_z: serialBuffer.readFloatLE(offset + 40),
+            currentMode: serialBuffer.readUInt8(offset + 44),
+            cmd_yaw: serialBuffer.readInt16LE(offset + 45),
+            cmd_throttle: serialBuffer.readInt16LE(offset + 47),
+            cmd_pitch: serialBuffer.readInt16LE(offset + 49),
+            cmd_roll: serialBuffer.readInt16LE(offset + 51),
+            lossRate: serialBuffer.readUInt8(offset + 53)
           };
 
           // Validate before sending to renderer
@@ -279,6 +281,13 @@ async function connectSerialInternal(portPath, baudRate) {
           } else {
             _packetStats.validationErrors++;
           }
+        } else if (type === 0x05) { // PKT_MESSAGE
+          const message = serialBuffer.subarray(3, 3 + len).toString('utf8');
+          logMessage('INFO', `Device msg: ${message}`);
+        } else if (type === 0x03) { // PKT_ACK
+          logMessage('INFO', 'Device: ACK received');
+        } else if (type === 0x04) { // PKT_NACK
+          logMessage('WARN', 'Device: NACK received');
         }
         serialBuffer = serialBuffer.subarray(expectedSize);
       } else {
@@ -521,12 +530,18 @@ function startSimulator(webContents) {
         longitude:    _simLon,
         altitude:     120 + (Math.random() - 0.5) * 10,
         currentMode:  1,
+        roll:         (Math.random() - 0.5) * 20,
         gforce:       1.0 + (Math.random() - 0.5) * 0.3,
         velocity_mag: 22 + (Math.random() - 0.5) * 5,
         pitch:        -8 + (Math.random() - 0.5) * 4,
         yaw:          45 + (Math.random() - 0.5) * 10,
-        pos_local_x: 0, pos_local_y: 0, pos_local_z: 0,
-        cmd_yaw: 0, cmd_throttle: 90, cmd_pitch: -8, cmd_roll: 0
+        pos_local_x: (Math.random() - 0.5) * 100, 
+        pos_local_y: (Math.random() - 0.5) * 100, 
+        pos_local_z: 120 + (Math.random() - 0.5) * 5,
+        cmd_yaw: (Math.random() - 0.5) * 10, 
+        cmd_throttle: 90 + (Math.random() - 0.5) * 10, 
+        cmd_pitch: -8 + (Math.random() - 0.5) * 2, 
+        cmd_roll: (Math.random() - 0.5) * 5
     };
 
     const validated = validateTelemetry(rawSimData);

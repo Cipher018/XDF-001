@@ -37,18 +37,16 @@
             <p>"The skies are ours to protect"</p>
           </div>
           <div class="status-right" id="header-status-area">
-             <div class="signal-strength" id="signal-strength-widget" title="Link Quality" style="display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 5px 10px; border-radius: 15px; margin-right: 10px;">
-               <span class="icon" style="font-size: 18px; color: #4caf50;">signal_cellular_alt</span>
-               <span id="signal-quality-value" style="font-weight: bold; color: #eee;">100%</span>
+             <div class="signal-strength" id="signal-strength-widget" title="Link Quality">
+               <span class="icon">signal_cellular_alt</span>
+               <span id="signal-quality-value">100%</span>
              </div>
              <div id="offline-header-msg" class="offline-header-text"></div>
           </div>
         </div>
         <nav class="tabs" aria-label="Main Navigation">
-          <button type="button" class="tab-btn active" data-target="telemetry-view">
-            Telemetry
-          </button>
           <button type="button" class="tab-btn" data-target="commands-view">Mission</button>
+          <button type="button" class="tab-btn" data-target="debug-view">Debug Station</button>
           <div class="spacer"></div>
             <div class="serial-status-indicator" id="serial-status-pill" title="Serial Status">
               <span class="icon icon-small">usb</span>
@@ -103,18 +101,19 @@
               <div class="metric-value">0 <span class="unit">g</span></div>
             </div>
 
-            <div class="card orientation-card">
-              <div class="card-header">
-                <span class="icon">explore</span> Orientation
+              <div class="card orientation-card">
+                <div class="card-header">
+                  <span class="icon">explore</span> Orientation
+                </div>
+                <div class="orientation-table">
+                  <div><span>Pitch</span> <span id="pitch">0°</span></div>
+                  <div><span>Roll</span> <span id="roll">0°</span></div>
+                  <div><span>Yaw</span> <span id="yaw">0°</span></div>
+                  <div><span>Bearing</span> <span id="bearing">0°</span></div>
+                </div>
               </div>
-              <div class="orientation-table">
-                <div><span>Pitch</span> <span id="pitch">0°</span></div>
-                <div><span>Roll</span> <span id="roll">0°</span></div>
-                <div><span>Yaw</span> <span id="yaw">0°</span></div>
-                <div><span>Bearing</span> <span id="bearing">0°</span></div>
-              </div>
-            </div>
-          </section>
+
+            </section>
 
           <!-- Statistics Row -->
           <section class="stats-row" id="stats-section">
@@ -431,6 +430,52 @@
             </div>
           </section>
         </section>
+
+        <!-- DEBUG VIEW -->
+        <section
+          class="dashboard debug-dashboard"
+          id="debug-view"
+          aria-label="Debug Dashboard"
+          style="display: none"
+        >
+          <div class="debug-container">
+            <div class="card debug-card-full">
+              <div class="card-header">
+                <span class="icon">terminal</span> System Internal State
+              </div>
+              <div class="debug-full-grid">
+                <div class="debug-category">
+                  <h3>Calculated Commands</h3>
+                  <div class="debug-row"><span>Target Roll</span> <span id="db-target-roll">0.0°</span></div>
+                  <div class="debug-row"><span>Target Pitch</span> <span id="db-target-pitch">0.0°</span></div>
+                  <div class="debug-row"><span>Target Yaw</span> <span id="db-target-yaw">0.0°</span></div>
+                  <div class="debug-row"><span>Target Throttle</span> <span id="db-target-throttle">0</span></div>
+                </div>
+                <div class="debug-category">
+                  <h3>Local Navigation (NED)</h3>
+                  <div class="debug-row"><span>Pos X (East)</span> <span id="db-pos-x">0.0m</span></div>
+                  <div class="debug-row"><span>Pos Y (North)</span> <span id="db-pos-y">0.0m</span></div>
+                  <div class="debug-row"><span>Pos Z (Up)</span> <span id="db-pos-z">0.0m</span></div>
+                </div>
+                <div class="debug-category">
+                  <h3>Protocol Health</h3>
+                  <div class="debug-row"><span>Total Packets</span> <span id="db-pkt-total">0</span></div>
+                  <div class="debug-row"><span>Lost Packets</span> <span id="db-pkt-lost">0</span></div>
+                  <div class="debug-row"><span>Loss Rate</span> <span id="db-pkt-rate">0%</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card console-card">
+              <div class="card-header">
+                <span class="icon">list</span> Device Messages &amp; Logs
+              </div>
+              <div id="debug-console" class="console-output">
+                <div class="log-entry system">System initialized. Waiting for connection...</div>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
       <!-- End VIEWS CONTAINER -->
     </div>
@@ -514,6 +559,20 @@
                 <option value="es">Español</option>
               </select>
               <p class="fs-07 mt-05 text-secondary">Changes will apply immediately to all interface elements.</p>
+            </div>
+          </div>
+
+          <!-- Calibration Section -->
+          <div id="calibration-config" class="config-section hidden">
+            <div class="config-section">
+              <label>Magnetic Declination:</label>
+              <div class="flex-column gap-05">
+                <div class="flex-row gap-05 calibration-inputs">
+                  <input type="number" id="declination-input" value="-6.0" step="0.1" class="flex-grow-1">
+                  <button type="button" id="apply-declination-btn" class="primary-btn">Apply</button>
+                </div>
+                <p class="fs-07 text-secondary">Corrects the difference between Magnetic North and True North for your specific location.</p>
+              </div>
             </div>
           </div>
         </div>

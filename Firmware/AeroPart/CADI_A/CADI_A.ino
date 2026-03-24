@@ -242,7 +242,8 @@ struct __attribute__((packed)) SecureCommand {
   float    homeLat;
   float    homeLon;
   int16_t  declinationX10; // [F7] Replaces padding
-}; // 24 bytes
+  uint8_t  _pad[2];         // padding to 24 bytes (multiple of 4 for XXTEA)
+}; // Total: 24 bytes (6 words)
 
 struct __attribute__((packed)) SecureTelemetry {
   uint8_t  magic;
@@ -621,10 +622,15 @@ void loop() {
     uint8_t len = radio.getDynamicPayloadSize();
     if (len == sizeof(SecureCommand)) {
       radio.read(&secCmd, sizeof(SecureCommand));
+      
       // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
-      // Paso 1: CRC sobre datos en claro (paquete ya descifrado por nRF24 ack)
-      uint16_t crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 16);
-      // Paso 2: Verificar magic + CRC
+      // Paso 1: Descifrar paquete (ya que fue cifrado por CADI_G con btea n=6)
+      btea((uint32_t*)&secCmd, -6); // Decrypt 6 words (24 bytes)
+
+      // Paso 2: CRC sobre datos en claro (desde targetRoll hasta el final)
+      uint16_t crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 20); 
+      
+      // Paso 3: Verificar magic + CRC
       if (secCmd.magic == MAGIC_CMD && secCmd.crc == crc) {
         // ── Anti-replay: verificación de secuencia circular ──
         // seqDelta en [1..128] = paquete nuevo válido

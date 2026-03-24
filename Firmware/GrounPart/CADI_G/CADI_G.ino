@@ -189,14 +189,32 @@ bool configReceived = false;
 // ═══════════════════════════════════════════════════════
 
 void sendACK() {
-  uint8_t packet[] = {MAGIC_START, PKT_ACK, 0x00, MAGIC_END};
-  Serial.write(packet, sizeof(packet));
+  const uint8_t type = PKT_ACK;
+  const uint8_t len = 0;
+  uint8_t packet[6];
+  packet[0] = MAGIC_START;
+  packet[1] = type;
+  packet[2] = len;
+  uint16_t crc = calculateCRC16(&packet[1], 2); // TYPE + LEN (no payload)
+  packet[3] = (crc >> 8) & 0xFF;
+  packet[4] = crc & 0xFF;
+  packet[5] = MAGIC_END;
+  Serial.write(packet, 6);
   Serial.flush();
 }
 
 void sendNACK() {
-  uint8_t packet[] = {MAGIC_START, PKT_NACK, 0x00, MAGIC_END};
-  Serial.write(packet, sizeof(packet));
+  const uint8_t type = PKT_NACK;
+  const uint8_t len = 0;
+  uint8_t packet[6];
+  packet[0] = MAGIC_START;
+  packet[1] = type;
+  packet[2] = len;
+  uint16_t crc = calculateCRC16(&packet[1], 2); // TYPE + LEN (no payload)
+  packet[3] = (crc >> 8) & 0xFF;
+  packet[4] = crc & 0xFF;
+  packet[5] = MAGIC_END;
+  Serial.write(packet, 6);
   Serial.flush();
 }
 
@@ -559,7 +577,8 @@ struct __attribute__((packed)) SecureCommand {
   float    homeLat;
   float    homeLon;
   int16_t  declinationX10; // [F7] Replaces padding
-}; // 24 bytes
+  uint8_t  _pad[2];         // padding to 24 bytes (multiple of 4 for XXTEA)
+}; // Total: 24 bytes (6 words) // 24 bytes
 
 struct __attribute__((packed)) SecureTelemetry {
   uint8_t  magic;
@@ -1384,10 +1403,10 @@ void loop() {
     // secCmd.padding eliminado — reemplazado por declinationX10 [F7]
 
     // ══ ORDEN CRÍTICO: NO REORDENAR ══════════════════
-    // Paso 1: CRC sobre datos en claro (antes de cifrar)
-    secCmd.crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 16);
+    // Paso 1: CRC sobre datos en claro (desde targetRoll hasta el final)
+    secCmd.crc = calculateRadioCRC16((uint8_t*)&secCmd.targetRoll, 20); 
     // Paso 2: Cifrar paquete completo (CRC incluido)
-    btea((uint32_t*)&secCmd, 6); // Encrypt 24 bytes (6 words)
+    btea((uint32_t*)&secCmd, 6); // Encrypt 6 words (24 bytes)
 
     // TRANSMISSION
     radio.stopListening();
