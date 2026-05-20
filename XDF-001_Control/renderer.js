@@ -614,6 +614,85 @@ window.electronAPI.onTelemetryData((data) => {
     // Call HUD drawing
     drawHUD(pitch, roll, bearing, alt, speed);
 
+    // Update Three.js 3D Virtual Telemetry variables
+    window._lastThrottlePct = powerPct;
+    window._lastSpeedKmh = speed;
+    window._lastYaw = yaw;
+
+    if (threeAircraft) {
+        const pitchRad = (pitch || 0) * Math.PI / 180;
+        const rollRad = (roll || 0) * Math.PI / 180;
+        const yawRad = (yaw || 0) * Math.PI / 180;
+
+        threeAircraft.rotation.set(-pitchRad, -yawRad, -rollRad);
+    }
+
+    // Save current point in path history
+    if (pos_local_x !== undefined && pos_local_y !== undefined && pos_local_z !== undefined) {
+        pathPoints3D.push({ x: pos_local_x / 10, y: pos_local_z / 10, z: -pos_local_y / 10 });
+        if (pathPoints3D.length > MAX_PATH_POINTS_3D) {
+            pathPoints3D.shift();
+        }
+    }
+
+    // Update path lines
+    if (threePathLine && pathPoints3D.length > 1) {
+        const currentPoint = pathPoints3D[pathPoints3D.length - 1];
+        const positions = threePathLine.geometry.attributes.position.array;
+
+        for (let i = 0; i < MAX_PATH_POINTS_3D; i++) {
+            const ptIdx = pathPoints3D.length - 1 - i;
+            if (ptIdx >= 0) {
+                const pt = pathPoints3D[ptIdx];
+                positions[i * 3] = pt.x - currentPoint.x;
+                positions[i * 3 + 1] = pt.y - currentPoint.y;
+                positions[i * 3 + 2] = pt.z - currentPoint.z;
+            } else {
+                positions[i * 3] = 0;
+                positions[i * 3 + 1] = 0;
+                positions[i * 3 + 2] = 0;
+            }
+        }
+        threePathLine.geometry.attributes.position.needsUpdate = true;
+    }
+
+    // Update glide footprint
+    if (threeFootprintCone && window._footprintRing && window._footprintRays) {
+        const sinkRate = 2.5; // m/s
+        const glideRatio = 7.0;
+        const windX = 3.5; // East m/s
+        const windY = -2.0; // North m/s
+        
+        const glideTime = alt / sinkRate;
+        const driftE = windX * glideTime;
+        const driftN = windY * glideTime;
+
+        // Scale: 1 unit = 40 meters
+        const radiusScaled = Math.max(1.5, Math.min(12, (alt * glideRatio) / 40));
+        const driftXScaled = driftE / 40;
+        const driftZScaled = -driftN / 40; // in Three.js, Z is North
+
+        threeFootprintCone.position.set(driftXScaled, -3.99, driftZScaled);
+        threeFootprintCone.scale.set(radiusScaled, 1, radiusScaled);
+
+        window._footprintRing.position.set(driftXScaled, -3.99, driftZScaled);
+        window._footprintRing.scale.set(radiusScaled, 1, radiusScaled);
+
+        const rayPos = window._footprintRays.geometry.attributes.position.array;
+        const numRays = 8;
+        for (let i = 0; i < numRays; i++) {
+            const angle = (i / numRays) * Math.PI * 2;
+            rayPos[i * 6] = 0;
+            rayPos[i * 6 + 1] = 0.5;
+            rayPos[i * 6 + 2] = 0;
+
+            rayPos[i * 6 + 3] = driftXScaled + Math.cos(angle) * radiusScaled;
+            rayPos[i * 6 + 4] = -3.99;
+            rayPos[i * 6 + 5] = driftZScaled + Math.sin(angle) * radiusScaled;
+        }
+        window._footprintRays.geometry.attributes.position.needsUpdate = true;
+    }
+
     // Track last known position for mission map auto-centering
     if (window._telemetryUpdateHook) window._telemetryUpdateHook(lat, lon);
     window._lastDroneLat = lat;
@@ -1985,6 +2064,7 @@ loadPreferences();
 setupMissionLayerSwitcher();
 
 // Restore saved map layer
+const savedLayer = localStorage.getItem('cadi_map_layer') || 'dark';
 if (savedLayer && tileLayers[savedLayer]) {
     switchMapLayer(map, savedLayer, document.getElementById('telemetry-layer-switcher'));
 }
@@ -2000,3 +2080,236 @@ window.addEventListener('keydown', (e) => {
         }
     }
 });
+
+// =============================================
+// THREE.JS 3D VIRTUAL TELEMETRY SYSTEM
+// =============================================
+let threeScene, threeCamera, threeRenderer, threeAircraft, threeGrid, threePathLine, threeFootprintCone;
+let pathPoints3D = [];
+const MAX_PATH_POINTS_3D = 200;
+
+function initThreeJS() {
+    const canvas = document.getElementById('three-canvas');
+    if (!canvas) return;
+
+    // Create scene
+    threeScene = new THREE.Scene();
+    threeScene.background = new THREE.Color(0x020c1b);
+    threeScene.fog = new THREE.FogExp2(0x020c1b, 0.015);
+
+    // Create camera
+    threeCamera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    threeCamera.position.set(0, 3.5, 9); // premium chases perspective
+
+    // Create renderer
+    threeRenderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+    threeRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    threeRenderer.shadowMap.enabled = true;
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0x4589f5, 0.6);
+    threeScene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(5, 15, 5);
+    threeScene.add(dirLight);
+
+    // Aircraft container
+    threeAircraft = new THREE.Group();
+    threeScene.add(threeAircraft);
+
+    // Fuselage
+    const fuselageGeom = new THREE.CylinderGeometry(0.35, 0.12, 3.2, 12);
+    fuselageGeom.rotateX(Math.PI / 2);
+    const fuselageMat = new THREE.MeshStandardMaterial({
+        color: 0xc0c0c0,
+        roughness: 0.3,
+        metalness: 0.8
+    });
+    const fuselage = new THREE.Mesh(fuselageGeom, fuselageMat);
+    threeAircraft.add(fuselage);
+
+    // Main Wings (P-51 Mustang style)
+    const wingGeom = new THREE.BoxGeometry(4.6, 0.07, 0.75);
+    const wingMat = new THREE.MeshStandardMaterial({
+        color: 0x4589f5,
+        roughness: 0.4,
+        metalness: 0.5
+    });
+    const wings = new THREE.Mesh(wingGeom, wingMat);
+    wings.position.set(0, 0, -0.3); // wings slightly forward
+    threeAircraft.add(wings);
+
+    // Canopy (Glass Cockpit)
+    const canopyGeom = new THREE.SphereGeometry(0.28, 16, 16);
+    canopyGeom.scale(1, 0.8, 1.8);
+    const canopyMat = new THREE.MeshStandardMaterial({
+        color: 0x00e5ff,
+        roughness: 0.1,
+        metalness: 0.9,
+        transparent: true,
+        opacity: 0.75
+    });
+    const canopy = new THREE.Mesh(canopyGeom, canopyMat);
+    canopy.position.set(0, 0.28, 0.2);
+    threeAircraft.add(canopy);
+
+    // Tail fin (Vertical Stabilizer)
+    const tailFinGeom = new THREE.BoxGeometry(0.08, 0.75, 0.55);
+    const tailFinMat = new THREE.MeshStandardMaterial({
+        color: 0xff4d4d,
+        roughness: 0.4,
+        metalness: 0.5
+    });
+    const tailFin = new THREE.Mesh(tailFinGeom, tailFinMat);
+    tailFin.position.set(0, 0.42, 1.25);
+    threeAircraft.add(tailFin);
+
+    // Tail wing (Horizontal Stabilizer)
+    const tailWingGeom = new THREE.BoxGeometry(1.35, 0.04, 0.38);
+    const tailWing = new THREE.Mesh(tailWingGeom, tailFinMat);
+    tailWing.position.set(0, 0.08, 1.25);
+    threeAircraft.add(tailWing);
+
+    // Propeller Spinner
+    const spinnerGeom = new THREE.ConeGeometry(0.35, 0.65, 12);
+    spinnerGeom.rotateX(-Math.PI / 2);
+    const spinnerMat = new THREE.MeshStandardMaterial({
+        color: 0xff4d4d,
+        roughness: 0.4,
+        metalness: 0.6
+    });
+    const spinner = new THREE.Mesh(spinnerGeom, spinnerMat);
+    spinner.position.set(0, 0, -1.625);
+    threeAircraft.add(spinner);
+
+    // Propeller Blades
+    const bladeGeom = new THREE.BoxGeometry(1.5, 0.08, 0.02);
+    const bladeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+    const propeller = new THREE.Group();
+    propeller.position.set(0, 0, -1.95);
+    
+    const blade1 = new THREE.Mesh(bladeGeom, bladeMat);
+    blade1.rotation.z = Math.PI / 4;
+    propeller.add(blade1);
+    
+    const blade2 = new THREE.Mesh(bladeGeom, bladeMat);
+    blade2.rotation.z = -Math.PI / 4;
+    propeller.add(blade2);
+    
+    threeAircraft.add(propeller);
+    window._propeller = propeller;
+
+    // Moving Ground Grid
+    const gridHelper = new THREE.GridHelper(200, 50, 0x4589f5, 0x1d3c6a);
+    gridHelper.position.y = -4;
+    threeScene.add(gridHelper);
+    threeGrid = gridHelper;
+
+    // Path Line History
+    const pathGeom = new THREE.BufferGeometry();
+    const pathPositions = new Float32Array(MAX_PATH_POINTS_3D * 3);
+    pathGeom.setAttribute('position', new THREE.BufferAttribute(pathPositions, 3));
+    
+    const pathMat = new THREE.LineBasicMaterial({
+        color: 0x00e5ff,
+        linewidth: 2.5,
+        transparent: true,
+        opacity: 0.8
+    });
+    threePathLine = new THREE.Line(pathGeom, pathMat);
+    threeScene.add(threePathLine);
+
+    // Ground Circle for glide footprint
+    const footprintGeom = new THREE.RingGeometry(0, 1, 32);
+    footprintGeom.rotateX(-Math.PI / 2);
+    const footprintMat = new THREE.MeshBasicMaterial({
+        color: 0x00e5ff,
+        transparent: true,
+        opacity: 0.12,
+        side: THREE.DoubleSide
+    });
+    threeFootprintCone = new THREE.Mesh(footprintGeom, footprintMat);
+    threeFootprintCone.position.y = -3.99;
+    threeScene.add(threeFootprintCone);
+
+    // Border ring
+    const ringGeom = new THREE.RingGeometry(0.98, 1, 32);
+    ringGeom.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+        color: 0x00e5ff,
+        transparent: true,
+        opacity: 0.4,
+        side: THREE.DoubleSide
+    });
+    const threeFootprintRing = new THREE.Mesh(ringGeom, ringMat);
+    threeFootprintRing.position.y = -3.99;
+    threeScene.add(threeFootprintRing);
+    window._footprintRing = threeFootprintRing;
+
+    // Rays from aircraft to ground footprint edge
+    const rayMat = new THREE.LineBasicMaterial({
+        color: 0x00e5ff,
+        transparent: true,
+        opacity: 0.2
+    });
+    const rayGeom = new THREE.BufferGeometry();
+    const rayPositions = new Float32Array(8 * 2 * 3);
+    rayGeom.setAttribute('position', new THREE.BufferAttribute(rayPositions, 3));
+    const threeFootprintRays = new THREE.LineSegments(rayGeom, rayMat);
+    threeScene.add(threeFootprintRays);
+    window._footprintRays = threeFootprintRays;
+
+    // Animation Loop
+    let clock = new THREE.Clock();
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const delta = clock.getDelta();
+
+        // Spin propeller based on motor speed
+        const throttlePct = window._lastThrottlePct || 50;
+        if (window._propeller) {
+            window._propeller.rotation.z += (throttlePct * 0.4 + 2) * delta;
+        }
+
+        // Animate grid moving backward relative to pitch/yaw/speed
+        const speedKmh = window._lastSpeedKmh || 0;
+        const speedMs = speedKmh / 3.6;
+        if (threeGrid) {
+            const yawRad = (window._lastYaw || 0) * Math.PI / 180;
+            // Move grid in opposite direction of travel
+            threeGrid.position.x += speedMs * Math.sin(yawRad) * 0.05 * delta;
+            threeGrid.position.z += speedMs * Math.cos(yawRad) * 0.05 * delta;
+
+            if (Math.abs(threeGrid.position.x) > 4) threeGrid.position.x = 0;
+            if (Math.abs(threeGrid.position.z) > 4) threeGrid.position.z = 0;
+        }
+
+        // Gentler premium panning
+        const time = clock.getElapsedTime() * 0.15;
+        const camDist = 8.5;
+        const camHeight = 3.2;
+        threeCamera.position.x = Math.sin(time) * 1.8;
+        threeCamera.position.z = camDist + Math.cos(time * 0.4) * 0.8;
+        threeCamera.position.y = camHeight + Math.sin(time * 0.6) * 0.4;
+        threeCamera.lookAt(0, 0.4, 0);
+
+        threeRenderer.render(threeScene, threeCamera);
+    }
+    animate();
+
+    // Resize handler
+    const resizeObserver = new ResizeObserver(() => {
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        threeCamera.aspect = width / height;
+        threeCamera.updateProjectionMatrix();
+        threeRenderer.setSize(width, height, false);
+    });
+    resizeObserver.observe(canvas.parentElement);
+}
+
+// Start Three.js system
+initThreeJS();

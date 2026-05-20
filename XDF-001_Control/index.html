@@ -109,10 +109,20 @@
                   <div><span>Pitch</span> <span id="pitch">0°</span></div>
                   <div><span>Roll</span> <span id="roll">0°</span></div>
                   <div><span>Yaw</span> <span id="yaw">0°</span></div>
-                  <div><span>Bearing</span> <span id="bearing">0°</span></div>
                 </div>
               </div>
 
+              <!-- 3D Virtual Telemetry Card -->
+              <div class="card three-card">
+                <div class="card-header">
+                  <div class="title-group" style="display: flex; align-items: center; gap: 0.4rem;">
+                    <span class="icon">3d_rotation</span> 3D Virtual Telemetry
+                  </div>
+                </div>
+                <div class="three-container">
+                  <canvas id="three-canvas"></canvas>
+                </div>
+              </div>
             </section>
 
           <!-- Statistics Row -->
@@ -678,6 +688,7 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>
